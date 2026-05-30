@@ -1,18 +1,22 @@
 const multer = require('multer');
 const path = require('path');
 
-// Use memory storage (will send to cloudinary)
 const storage = multer.memoryStorage();
+
+const fileFilter = (req, file, cb) => {
+  const allowedImageMimes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+  const allowedVideoMimes = ['video/mp4', 'video/mpeg', 'video/quicktime', 'video/x-msvideo', 'video/webm', 'video/3gpp'];
+  if (allowedImageMimes.includes(file.mimetype) || allowedVideoMimes.includes(file.mimetype)) {
+    cb(null, true);
+  } else {
+    cb(new Error('Aina ya faili haikubaliki. Tafadhali pakia picha au video pekee.'), false);
+  }
+};
+
 const upload = multer({
   storage,
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB per file
-  fileFilter: (req, file, cb) => {
-    const allowedTypes = /jpeg|jpg|png|gif|webp/;
-    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
-    const mimetype = allowedTypes.test(file.mimetype);
-    if (extname && mimetype) return cb(null, true);
-    cb(new Error('Only image files are allowed'));
-  },
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+  fileFilter,
 });
 
 module.exports = upload;

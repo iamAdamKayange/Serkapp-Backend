@@ -14,6 +14,9 @@ const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
 
+// 🔥 Enable trust proxy (important for rate limiting behind reverse proxy like Render/Nginx)
+app.set('trust proxy', 1);
+
 // Security middleware
 app.use(helmet());
 app.use(cors());
@@ -43,6 +46,7 @@ app.use('/api/agreements', agreementRoutes);
 
 // Health check
 app.get('/health', (req, res) => res.status(200).json({ status: 'OK' }));
+
 // Simple root route – kuondoa 404 kwenye browser
 app.get('/', (req, res) => {
   res.json({ 
