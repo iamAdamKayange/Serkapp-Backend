@@ -1,4 +1,3 @@
-// src/routes/houseRoutes.js
 const express = require('express');
 const { authMiddleware, landlordOnly } = require('../middleware/auth');
 const upload = require('../middleware/upload');
@@ -18,18 +17,25 @@ const {
 
 const router = express.Router();
 
-// Public
+// ======================
+// PUBLIC ROUTES
+// ======================
 router.get('/', getAllHouses);
+router.get('/landlord/my-houses', authMiddleware, landlordOnly, getMyHouses);
 router.get('/:id', getHouseById);
 
-// Protected (landlord)
+// ======================
+// PROTECTED ROUTES
+// ======================
 router.post('/upload-media', authMiddleware, landlordOnly, upload.array('files', 20), uploadMedia);
 router.post('/', authMiddleware, landlordOnly, createHouse);
-router.get('/landlord/my-houses', authMiddleware, landlordOnly, getMyHouses);
+
 router.put('/:id', authMiddleware, landlordOnly, updateHouse);
 router.delete('/:id', authMiddleware, landlordOnly, deleteHouse);
+
 router.post('/:id/images', authMiddleware, landlordOnly, addHouseImage);
 router.post('/:id/videos', authMiddleware, landlordOnly, addHouseVideo);
+
 router.delete('/images/:imageId', authMiddleware, landlordOnly, deleteHouseImage);
 router.delete('/videos/:videoId', authMiddleware, landlordOnly, deleteHouseVideo);
 
