@@ -12,11 +12,9 @@ exports.createHouse = async (req, res, next) => {
     hasCeiling, hasAluminium, hasCeilingBoard, hasTiles, hasFence,
     layoutType, hasPrivateBathroom, hasPrivateToilet, hasPrivateKitchen,
     isSharedBathroom, isSharedToilet, isSharedKitchen, numberOfSharedUnits,
-    imageUrls = [],
-    videoUrls = []
+    imageUrls = [], videoUrls = []
   } = req.body;
 
-  // Validate required fields
   if (!name || !rentPrice || !locationAddress) {
     return res.status(400).json({ error: 'Jina, bei na anwani zinahitajika.' });
   }
@@ -24,14 +22,13 @@ exports.createHouse = async (req, res, next) => {
   try {
     await pool.query('BEGIN');
 
-    // Check if coordinates are valid numbers
     const hasValidCoords = latitude != null && longitude != null && !isNaN(latitude) && !isNaN(longitude);
 
-    // Insert query (simplified to avoid dynamic columns)
+    // Insert only the columns that actually exist (no latitude/longitude columns)
     const insertQuery = `
       INSERT INTO houses (
         landlord_id, name, status, type, bedrooms, description,
-        rent_price, deposit_amount, location_address, latitude, longitude,
+        rent_price, deposit_amount, location_address,
         region, district, division, ward, village, street,
         water_included, electricity_included, internet_included, nearby_amenities,
         has_ceiling, has_aluminium, has_ceiling_board, has_tiles, has_fence,
@@ -40,20 +37,20 @@ exports.createHouse = async (req, res, next) => {
         geom
       ) VALUES (
         $1, $2, $3, $4, $5, $6,
-        $7, $8, $9, $10, $11,
-        $12, $13, $14, $15, $16, $17,
-        $18, $19, $20, $21,
-        $22, $23, $24, $25, $26,
-        $27, $28, $29, $30,
-        $31, $32, $33, $34,
-        ${hasValidCoords ? 'ST_SetSRID(ST_MakePoint($35, $36), 4326)' : 'NULL'}
+        $7, $8, $9,
+        $10, $11, $12, $13, $14, $15,
+        $16, $17, $18, $19,
+        $20, $21, $22, $23, $24,
+        $25, $26, $27, $28,
+        $29, $30, $31, $32,
+        ${hasValidCoords ? 'ST_SetSRID(ST_MakePoint($33, $34), 4326)' : 'NULL'}
       )
       RETURNING id
     `;
 
-    const values = [
+    const baseValues = [
       landlordId, name, status || 'Inapatikana', type, bedrooms, description,
-      rentPrice, depositAmount, locationAddress, latitude, longitude,
+      rentPrice, depositAmount, locationAddress,
       region, district, division, ward, village, street,
       waterIncluded || false, electricityIncluded || false, internetIncluded || false, nearbyAmenities,
       hasCeiling || false, hasAluminium || false, hasCeilingBoard || false, hasTiles || false, hasFence || false,
@@ -63,7 +60,7 @@ exports.createHouse = async (req, res, next) => {
       numberOfSharedUnits
     ];
 
-    const finalValues = hasValidCoords ? [...values, longitude, latitude] : values;
+    const finalValues = hasValidCoords ? [...baseValues, longitude, latitude] : baseValues;
     const result = await pool.query(insertQuery, finalValues);
     const houseId = result.rows[0].id;
 
@@ -112,7 +109,16 @@ exports.getAllHouses = async (req, res, next) => {
   try {
     const query = `
       SELECT 
-        h.*,
+        h.id, h.landlord_id, h.name, h.status, h.type, h.bedrooms, h.description,
+        h.rent_price, h.deposit_amount, h.location_address,
+        h.region, h.district, h.division, h.ward, h.village, h.street,
+        h.water_included, h.electricity_included, h.internet_included, h.nearby_amenities,
+        h.has_ceiling, h.has_aluminium, h.has_ceiling_board, h.has_tiles, h.has_fence,
+        h.layout_type, h.has_private_bathroom, h.has_private_toilet, h.has_private_kitchen,
+        h.is_shared_bathroom, h.is_shared_toilet, h.is_shared_kitchen, h.number_of_shared_units,
+        h.created_at, h.updated_at,
+        ST_Y(h.geom) AS latitude,
+        ST_X(h.geom) AS longitude,
         COALESCE((SELECT array_agg(image_url ORDER BY display_order) FROM house_images WHERE house_id = h.id), '{}') AS images,
         COALESCE((SELECT array_agg(video_url ORDER BY display_order) FROM house_videos WHERE house_id = h.id), '{}') AS videos
       FROM houses h
@@ -130,7 +136,16 @@ exports.getHouseById = async (req, res, next) => {
   try {
     const query = `
       SELECT 
-        h.*,
+        h.id, h.landlord_id, h.name, h.status, h.type, h.bedrooms, h.description,
+        h.rent_price, h.deposit_amount, h.location_address,
+        h.region, h.district, h.division, h.ward, h.village, h.street,
+        h.water_included, h.electricity_included, h.internet_included, h.nearby_amenities,
+        h.has_ceiling, h.has_aluminium, h.has_ceiling_board, h.has_tiles, h.has_fence,
+        h.layout_type, h.has_private_bathroom, h.has_private_toilet, h.has_private_kitchen,
+        h.is_shared_bathroom, h.is_shared_toilet, h.is_shared_kitchen, h.number_of_shared_units,
+        h.created_at, h.updated_at,
+        ST_Y(h.geom) AS latitude,
+        ST_X(h.geom) AS longitude,
         COALESCE((SELECT array_agg(image_url ORDER BY display_order) FROM house_images WHERE house_id = h.id), '{}') AS images,
         COALESCE((SELECT array_agg(video_url ORDER BY display_order) FROM house_videos WHERE house_id = h.id), '{}') AS videos,
         u.first_name AS landlord_first_name, u.last_name AS landlord_last_name, u.phone AS landlord_phone, u.email AS landlord_email
@@ -149,7 +164,16 @@ exports.getMyHouses = async (req, res, next) => {
   try {
     const query = `
       SELECT 
-        h.*,
+        h.id, h.landlord_id, h.name, h.status, h.type, h.bedrooms, h.description,
+        h.rent_price, h.deposit_amount, h.location_address,
+        h.region, h.district, h.division, h.ward, h.village, h.street,
+        h.water_included, h.electricity_included, h.internet_included, h.nearby_amenities,
+        h.has_ceiling, h.has_aluminium, h.has_ceiling_board, h.has_tiles, h.has_fence,
+        h.layout_type, h.has_private_bathroom, h.has_private_toilet, h.has_private_kitchen,
+        h.is_shared_bathroom, h.is_shared_toilet, h.is_shared_kitchen, h.number_of_shared_units,
+        h.created_at, h.updated_at,
+        ST_Y(h.geom) AS latitude,
+        ST_X(h.geom) AS longitude,
         COALESCE((SELECT array_agg(image_url ORDER BY display_order) FROM house_images WHERE house_id = h.id), '{}') AS images,
         COALESCE((SELECT array_agg(video_url ORDER BY display_order) FROM house_videos WHERE house_id = h.id), '{}') AS videos
       FROM houses h
@@ -187,6 +211,7 @@ exports.updateHouse = async (req, res, next) => {
         values.push(updates[field]);
       }
     }
+    // Update geometry if latitude & longitude are provided
     if (updates.latitude !== undefined && updates.longitude !== undefined) {
       setClauses.push(`geom = ST_SetSRID(ST_MakePoint($${idx++}, $${idx++}), 4326)`);
       values.push(updates.longitude, updates.latitude);
