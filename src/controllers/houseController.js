@@ -1,18 +1,52 @@
 // src/controllers/houseController.js
 const pool = require('../config/db');
 const { uploadMultiple } = require('../services/imageUploadService');
+const cloudinary = require('cloudinary').v2;
+
+// Helper: extract public_id from Cloudinary URL
+const extractPublicIdFromUrl = (url) => {
+  if (!url) return null;
+  // Cloudinary URL format: https://res.cloudinary.com/cloud_name/.../v1234567890/folder/filename.ext
+  const parts = url.split('/');
+  const versionPart = parts.find(part => part.startsWith('v'));
+  const versionIndex = parts.indexOf(versionPart);
+  if (versionIndex !== -1 && parts.length > versionIndex + 1) {
+    const filename = parts[versionIndex + 1];
+    const publicId = filename.substring(0, filename.lastIndexOf('.'));
+    // Prepend folder if present
+    const folderParts = parts.slice(versionIndex + 2, -1);
+    return folderParts.length ? `${folderParts.join('/')}/${publicId}` : publicId;
+  }
+  return null;
+};
+
+// Helper: delete from Cloudinary by URL
+const deleteFromCloudinary = async (url) => {
+  const publicId = extractPublicIdFromUrl(url);
+  if (!publicId) return;
+  try {
+    const resourceType = url.includes('/video/upload/') ? 'video' : 'image';
+    await cloudinary.uploader.destroy(publicId, { resource_type: resourceType });
+    console.log(`Deleted from Cloudinary: ${publicId} (${resourceType})`);
+  } catch (err) {
+    console.error(`Failed to delete ${url}:`, err.message);
+  }
+};
 
 // ========== 1. CREATE HOUSE ==========
 exports.createHouse = async (req, res, next) => {
   const landlordId = req.user.id;
   const {
-    name, status, type, bedrooms, description, rentPrice, depositAmount,
-    locationAddress, latitude, longitude, region, district, division, ward, village, street,
+    name, status, type, bedrooms, description,
+    firstName, lastName, phone,
+    rentPrice, depositAmount,
+    locationAddress, latitude, longitude,
+    region, district, division, ward, village, street,
     waterIncluded, electricityIncluded, internetIncluded, nearbyAmenities,
     hasCeiling, hasAluminium, hasCeilingBoard, hasTiles, hasFence,
     layoutType, hasPrivateBathroom, hasPrivateToilet, hasPrivateKitchen,
     isSharedBathroom, isSharedToilet, isSharedKitchen, numberOfSharedUnits,
-    imageUrls = [], videoUrls = []
+    imageUrls = [], videos = [], videoThumbnails = []
   } = req.body;
 
   if (!name || !rentPrice || !locationAddress) {
@@ -24,32 +58,36 @@ exports.createHouse = async (req, res, next) => {
 
     const hasValidCoords = latitude != null && longitude != null && !isNaN(latitude) && !isNaN(longitude);
 
-    // Insert only the columns that actually exist (no latitude/longitude columns)
     const insertQuery = `
       INSERT INTO houses (
         landlord_id, name, status, type, bedrooms, description,
+        first_name, last_name, phone,
         rent_price, deposit_amount, location_address,
         region, district, division, ward, village, street,
         water_included, electricity_included, internet_included, nearby_amenities,
         has_ceiling, has_aluminium, has_ceiling_board, has_tiles, has_fence,
         layout_type, has_private_bathroom, has_private_toilet, has_private_kitchen,
         is_shared_bathroom, is_shared_toilet, is_shared_kitchen, number_of_shared_units,
+        videos, video_thumbnails,
         geom
       ) VALUES (
         $1, $2, $3, $4, $5, $6,
         $7, $8, $9,
-        $10, $11, $12, $13, $14, $15,
-        $16, $17, $18, $19,
-        $20, $21, $22, $23, $24,
-        $25, $26, $27, $28,
-        $29, $30, $31, $32,
-        ${hasValidCoords ? 'ST_SetSRID(ST_MakePoint($33, $34), 4326)' : 'NULL'}
+        $10, $11, $12,
+        $13, $14, $15, $16, $17, $18,
+        $19, $20, $21, $22,
+        $23, $24, $25, $26, $27,
+        $28, $29, $30, $31,
+        $32, $33, $34, $35,
+        $36, $37,
+        ${hasValidCoords ? 'ST_SetSRID(ST_MakePoint($38, $39), 4326)' : 'NULL'}
       )
       RETURNING id
     `;
 
     const baseValues = [
       landlordId, name, status || 'Inapatikana', type, bedrooms, description,
+      firstName, lastName, phone,
       rentPrice, depositAmount, locationAddress,
       region, district, division, ward, village, street,
       waterIncluded || false, electricityIncluded || false, internetIncluded || false, nearbyAmenities,
@@ -57,7 +95,8 @@ exports.createHouse = async (req, res, next) => {
       layoutType || 'self_container',
       hasPrivateBathroom ?? true, hasPrivateToilet ?? true, hasPrivateKitchen ?? true,
       isSharedBathroom || false, isSharedToilet || false, isSharedKitchen || false,
-      numberOfSharedUnits
+      numberOfSharedUnits,
+      videos || [], videoThumbnails || []
     ];
 
     const finalValues = hasValidCoords ? [...baseValues, longitude, latitude] : baseValues;
@@ -69,14 +108,6 @@ exports.createHouse = async (req, res, next) => {
       await pool.query(
         `INSERT INTO house_images (house_id, image_url, display_order) VALUES ($1, $2, $3)`,
         [houseId, imageUrls[i], i]
-      );
-    }
-
-    // Save videos
-    for (let i = 0; i < videoUrls.length; i++) {
-      await pool.query(
-        `INSERT INTO house_videos (house_id, video_url, display_order) VALUES ($1, $2, $3)`,
-        [houseId, videoUrls[i], i]
       );
     }
 
@@ -110,23 +141,69 @@ exports.getAllHouses = async (req, res, next) => {
     const query = `
       SELECT 
         h.id, h.landlord_id, h.name, h.status, h.type, h.bedrooms, h.description,
+        h.first_name, h.last_name, h.phone,
         h.rent_price, h.deposit_amount, h.location_address,
         h.region, h.district, h.division, h.ward, h.village, h.street,
         h.water_included, h.electricity_included, h.internet_included, h.nearby_amenities,
         h.has_ceiling, h.has_aluminium, h.has_ceiling_board, h.has_tiles, h.has_fence,
         h.layout_type, h.has_private_bathroom, h.has_private_toilet, h.has_private_kitchen,
         h.is_shared_bathroom, h.is_shared_toilet, h.is_shared_kitchen, h.number_of_shared_units,
+        h.videos, h.video_thumbnails,
         h.created_at, h.updated_at,
         ST_Y(h.geom) AS latitude,
         ST_X(h.geom) AS longitude,
-        COALESCE((SELECT array_agg(image_url ORDER BY display_order) FROM house_images WHERE house_id = h.id), '{}') AS images,
-        COALESCE((SELECT array_agg(video_url ORDER BY display_order) FROM house_videos WHERE house_id = h.id), '{}') AS videos
+        COALESCE((SELECT array_agg(image_url ORDER BY display_order) FROM house_images WHERE house_id = h.id), '{}') AS images
       FROM houses h
       WHERE h.status = 'Inapatikana'
       ORDER BY h.created_at DESC
     `;
     const result = await pool.query(query);
-    res.json(result.rows);
+    // Transform to match Flutter HouseData format (camelCase)
+    const houses = result.rows.map(row => ({
+      id: row.id.toString(),
+      name: row.name,
+      status: row.status,
+      type: row.type,
+      bedrooms: row.bedrooms,
+      description: row.description,
+      firstName: row.first_name,
+      lastName: row.last_name,
+      phone: row.phone,
+      rentPrice: parseFloat(row.rent_price),
+      depositAmount: row.deposit_amount ? parseFloat(row.deposit_amount) : null,
+      location: row.location_address,
+      address: row.location_address,
+      latitude: row.latitude ? parseFloat(row.latitude) : null,
+      longitude: row.longitude ? parseFloat(row.longitude) : null,
+      region: row.region,
+      district: row.district,
+      division: row.division,
+      ward: row.ward,
+      village: row.village,
+      street: row.street,
+      images: row.images,
+      videos: row.videos || [],
+      videoThumbnails: row.video_thumbnails || [],
+      waterIncluded: row.water_included,
+      electricityIncluded: row.electricity_included,
+      internetIncluded: row.internet_included,
+      nearbyAmenities: row.nearby_amenities,
+      hasCeiling: row.has_ceiling,
+      hasAluminium: row.has_aluminium,
+      hasCeilingBoard: row.has_ceiling_board,
+      hasTiles: row.has_tiles,
+      hasFence: row.has_fence,
+      layoutType: row.layout_type,
+      hasPrivateBathroom: row.has_private_bathroom,
+      hasPrivateToilet: row.has_private_toilet,
+      hasPrivateKitchen: row.has_private_kitchen,
+      isSharedBathroom: row.is_shared_bathroom,
+      isSharedToilet: row.is_shared_toilet,
+      isSharedKitchen: row.is_shared_kitchen,
+      numberOfSharedUnits: row.number_of_shared_units,
+      createdAt: row.created_at
+    }));
+    res.json(houses);
   } catch (err) { next(err); }
 };
 
@@ -137,25 +214,69 @@ exports.getHouseById = async (req, res, next) => {
     const query = `
       SELECT 
         h.id, h.landlord_id, h.name, h.status, h.type, h.bedrooms, h.description,
+        h.first_name, h.last_name, h.phone,
         h.rent_price, h.deposit_amount, h.location_address,
         h.region, h.district, h.division, h.ward, h.village, h.street,
         h.water_included, h.electricity_included, h.internet_included, h.nearby_amenities,
         h.has_ceiling, h.has_aluminium, h.has_ceiling_board, h.has_tiles, h.has_fence,
         h.layout_type, h.has_private_bathroom, h.has_private_toilet, h.has_private_kitchen,
         h.is_shared_bathroom, h.is_shared_toilet, h.is_shared_kitchen, h.number_of_shared_units,
+        h.videos, h.video_thumbnails,
         h.created_at, h.updated_at,
         ST_Y(h.geom) AS latitude,
         ST_X(h.geom) AS longitude,
-        COALESCE((SELECT array_agg(image_url ORDER BY display_order) FROM house_images WHERE house_id = h.id), '{}') AS images,
-        COALESCE((SELECT array_agg(video_url ORDER BY display_order) FROM house_videos WHERE house_id = h.id), '{}') AS videos,
-        u.first_name AS landlord_first_name, u.last_name AS landlord_last_name, u.phone AS landlord_phone, u.email AS landlord_email
+        COALESCE((SELECT array_agg(image_url ORDER BY display_order) FROM house_images WHERE house_id = h.id), '{}') AS images
       FROM houses h
-      LEFT JOIN users u ON h.landlord_id = u.id
       WHERE h.id = $1
     `;
     const result = await pool.query(query, [id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Nyumba haikupatikana' });
-    res.json(result.rows[0]);
+    const row = result.rows[0];
+    const house = {
+      id: row.id.toString(),
+      name: row.name,
+      status: row.status,
+      type: row.type,
+      bedrooms: row.bedrooms,
+      description: row.description,
+      firstName: row.first_name,
+      lastName: row.last_name,
+      phone: row.phone,
+      rentPrice: parseFloat(row.rent_price),
+      depositAmount: row.deposit_amount ? parseFloat(row.deposit_amount) : null,
+      location: row.location_address,
+      address: row.location_address,
+      latitude: row.latitude ? parseFloat(row.latitude) : null,
+      longitude: row.longitude ? parseFloat(row.longitude) : null,
+      region: row.region,
+      district: row.district,
+      division: row.division,
+      ward: row.ward,
+      village: row.village,
+      street: row.street,
+      images: row.images,
+      videos: row.videos || [],
+      videoThumbnails: row.video_thumbnails || [],
+      waterIncluded: row.water_included,
+      electricityIncluded: row.electricity_included,
+      internetIncluded: row.internet_included,
+      nearbyAmenities: row.nearby_amenities,
+      hasCeiling: row.has_ceiling,
+      hasAluminium: row.has_aluminium,
+      hasCeilingBoard: row.has_ceiling_board,
+      hasTiles: row.has_tiles,
+      hasFence: row.has_fence,
+      layoutType: row.layout_type,
+      hasPrivateBathroom: row.has_private_bathroom,
+      hasPrivateToilet: row.has_private_toilet,
+      hasPrivateKitchen: row.has_private_kitchen,
+      isSharedBathroom: row.is_shared_bathroom,
+      isSharedToilet: row.is_shared_toilet,
+      isSharedKitchen: row.is_shared_kitchen,
+      numberOfSharedUnits: row.number_of_shared_units,
+      createdAt: row.created_at
+    };
+    res.json(house);
   } catch (err) { next(err); }
 };
 
@@ -165,23 +286,68 @@ exports.getMyHouses = async (req, res, next) => {
     const query = `
       SELECT 
         h.id, h.landlord_id, h.name, h.status, h.type, h.bedrooms, h.description,
+        h.first_name, h.last_name, h.phone,
         h.rent_price, h.deposit_amount, h.location_address,
         h.region, h.district, h.division, h.ward, h.village, h.street,
         h.water_included, h.electricity_included, h.internet_included, h.nearby_amenities,
         h.has_ceiling, h.has_aluminium, h.has_ceiling_board, h.has_tiles, h.has_fence,
         h.layout_type, h.has_private_bathroom, h.has_private_toilet, h.has_private_kitchen,
         h.is_shared_bathroom, h.is_shared_toilet, h.is_shared_kitchen, h.number_of_shared_units,
+        h.videos, h.video_thumbnails,
         h.created_at, h.updated_at,
         ST_Y(h.geom) AS latitude,
         ST_X(h.geom) AS longitude,
-        COALESCE((SELECT array_agg(image_url ORDER BY display_order) FROM house_images WHERE house_id = h.id), '{}') AS images,
-        COALESCE((SELECT array_agg(video_url ORDER BY display_order) FROM house_videos WHERE house_id = h.id), '{}') AS videos
+        COALESCE((SELECT array_agg(image_url ORDER BY display_order) FROM house_images WHERE house_id = h.id), '{}') AS images
       FROM houses h
       WHERE h.landlord_id = $1
       ORDER BY h.created_at DESC
     `;
     const result = await pool.query(query, [req.user.id]);
-    res.json(result.rows);
+    const houses = result.rows.map(row => ({
+      id: row.id.toString(),
+      name: row.name,
+      status: row.status,
+      type: row.type,
+      bedrooms: row.bedrooms,
+      description: row.description,
+      firstName: row.first_name,
+      lastName: row.last_name,
+      phone: row.phone,
+      rentPrice: parseFloat(row.rent_price),
+      depositAmount: row.deposit_amount ? parseFloat(row.deposit_amount) : null,
+      location: row.location_address,
+      address: row.location_address,
+      latitude: row.latitude ? parseFloat(row.latitude) : null,
+      longitude: row.longitude ? parseFloat(row.longitude) : null,
+      region: row.region,
+      district: row.district,
+      division: row.division,
+      ward: row.ward,
+      village: row.village,
+      street: row.street,
+      images: row.images,
+      videos: row.videos || [],
+      videoThumbnails: row.video_thumbnails || [],
+      waterIncluded: row.water_included,
+      electricityIncluded: row.electricity_included,
+      internetIncluded: row.internet_included,
+      nearbyAmenities: row.nearby_amenities,
+      hasCeiling: row.has_ceiling,
+      hasAluminium: row.has_aluminium,
+      hasCeilingBoard: row.has_ceiling_board,
+      hasTiles: row.has_tiles,
+      hasFence: row.has_fence,
+      layoutType: row.layout_type,
+      hasPrivateBathroom: row.has_private_bathroom,
+      hasPrivateToilet: row.has_private_toilet,
+      hasPrivateKitchen: row.has_private_kitchen,
+      isSharedBathroom: row.is_shared_bathroom,
+      isSharedToilet: row.is_shared_toilet,
+      isSharedKitchen: row.is_shared_kitchen,
+      numberOfSharedUnits: row.number_of_shared_units,
+      createdAt: row.created_at
+    }));
+    res.json(houses);
   } catch (err) { next(err); }
 };
 
@@ -195,12 +361,15 @@ exports.updateHouse = async (req, res, next) => {
     if (ownerCheck.rows.length === 0) return res.status(403).json({ error: 'Huna ruhusa' });
 
     const allowedFields = [
-      'name', 'status', 'type', 'bedrooms', 'description', 'rent_price', 'deposit_amount',
+      'name', 'status', 'type', 'bedrooms', 'description',
+      'first_name', 'last_name', 'phone',
+      'rent_price', 'deposit_amount',
       'location_address', 'region', 'district', 'division', 'ward', 'village', 'street',
       'water_included', 'electricity_included', 'internet_included', 'nearby_amenities',
       'has_ceiling', 'has_aluminium', 'has_ceiling_board', 'has_tiles', 'has_fence',
       'layout_type', 'has_private_bathroom', 'has_private_toilet', 'has_private_kitchen',
-      'is_shared_bathroom', 'is_shared_toilet', 'is_shared_kitchen', 'number_of_shared_units'
+      'is_shared_bathroom', 'is_shared_toilet', 'is_shared_kitchen', 'number_of_shared_units',
+      'videos', 'video_thumbnails'
     ];
     const setClauses = [];
     const values = [];
@@ -225,15 +394,30 @@ exports.updateHouse = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-// ========== 7. DELETE HOUSE ==========
+// ========== 7. DELETE HOUSE (with Cloudinary cleanup) ==========
 exports.deleteHouse = async (req, res, next) => {
   const { id } = req.params;
   const landlordId = req.user.id;
   try {
     const ownerCheck = await pool.query(`SELECT id FROM houses WHERE id = $1 AND landlord_id = $2`, [id, landlordId]);
     if (ownerCheck.rows.length === 0) return res.status(403).json({ error: 'Huna ruhusa' });
+
+    // Fetch all image URLs
+    const images = await pool.query(`SELECT image_url FROM house_images WHERE house_id = $1`, [id]);
+    // Fetch video URLs from house_videos
+    const videos = await pool.query(`SELECT video_url FROM house_videos WHERE house_id = $1`, [id]);
+
+    // Delete from Cloudinary
+    for (const img of images.rows) {
+      await deleteFromCloudinary(img.image_url);
+    }
+    for (const vid of videos.rows) {
+      await deleteFromCloudinary(vid.video_url);
+    }
+
+    // Delete house (cascade will remove images/videos records)
     await pool.query(`DELETE FROM houses WHERE id = $1`, [id]);
-    res.json({ message: 'Nyumba imefutwa' });
+    res.json({ message: 'Nyumba imefutwa na faili zake zimefutwa Cloudinary.' });
   } catch (err) { next(err); }
 };
 
@@ -273,32 +457,40 @@ exports.addHouseVideo = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-// ========== 10. DELETE IMAGE ==========
+// ========== 10. DELETE IMAGE (with Cloudinary cleanup) ==========
 exports.deleteHouseImage = async (req, res, next) => {
   const { imageId } = req.params;
   const landlordId = req.user.id;
   try {
-    const image = await pool.query(`SELECT house_id FROM house_images WHERE id = $1`, [imageId]);
+    const image = await pool.query(`SELECT house_id, image_url FROM house_images WHERE id = $1`, [imageId]);
     if (image.rows.length === 0) return res.status(404).json({ error: 'Picha haikupatikana' });
     const houseId = image.rows[0].house_id;
     const ownerCheck = await pool.query(`SELECT id FROM houses WHERE id = $1 AND landlord_id = $2`, [houseId, landlordId]);
     if (ownerCheck.rows.length === 0) return res.status(403).json({ error: 'Huna ruhusa' });
+    
+    // Delete from Cloudinary
+    await deleteFromCloudinary(image.rows[0].image_url);
+    
     await pool.query(`DELETE FROM house_images WHERE id = $1`, [imageId]);
-    res.json({ message: 'Picha imefutwa' });
+    res.json({ message: 'Picha imefutwa kwenye database na Cloudinary.' });
   } catch (err) { next(err); }
 };
 
-// ========== 11. DELETE VIDEO ==========
+// ========== 11. DELETE VIDEO (with Cloudinary cleanup) ==========
 exports.deleteHouseVideo = async (req, res, next) => {
   const { videoId } = req.params;
   const landlordId = req.user.id;
   try {
-    const video = await pool.query(`SELECT house_id FROM house_videos WHERE id = $1`, [videoId]);
+    const video = await pool.query(`SELECT house_id, video_url FROM house_videos WHERE id = $1`, [videoId]);
     if (video.rows.length === 0) return res.status(404).json({ error: 'Video haikupatikana' });
     const houseId = video.rows[0].house_id;
     const ownerCheck = await pool.query(`SELECT id FROM houses WHERE id = $1 AND landlord_id = $2`, [houseId, landlordId]);
     if (ownerCheck.rows.length === 0) return res.status(403).json({ error: 'Huna ruhusa' });
+    
+    // Delete from Cloudinary
+    await deleteFromCloudinary(video.rows[0].video_url);
+    
     await pool.query(`DELETE FROM house_videos WHERE id = $1`, [videoId]);
-    res.json({ message: 'Video imefutwa' });
+    res.json({ message: 'Video imefutwa kwenye database na Cloudinary.' });
   } catch (err) { next(err); }
 };

@@ -3,15 +3,19 @@ const pool = require('../config/db');
 class House {
   constructor(row) {
     this.id = row.id;
-    this.landlordId = row.landlord_id;
+    this.landlordId = row.landlord_id;  // optional, unaweza kuondoa kama hutumii
     this.name = row.name;
     this.status = row.status;
     this.type = row.type;
     this.bedrooms = row.bedrooms;
     this.description = row.description;
+    this.firstName = row.first_name;
+    this.lastName = row.last_name;
+    this.phone = row.phone;
     this.rentPrice = parseFloat(row.rent_price);
     this.depositAmount = row.deposit_amount ? parseFloat(row.deposit_amount) : null;
-    this.locationAddress = row.location_address;
+    this.location = row.location_address;  // kwa compatibility na Flutter
+    this.address = row.location_address;
     this.latitude = row.latitude ? parseFloat(row.latitude) : null;
     this.longitude = row.longitude ? parseFloat(row.longitude) : null;
     this.geom = row.geom;
@@ -38,20 +42,26 @@ class House {
     this.isSharedToilet = row.is_shared_toilet;
     this.isSharedKitchen = row.is_shared_kitchen;
     this.numberOfSharedUnits = row.number_of_shared_units;
+    this.images = row.images || [];      // kutoka house_images
+    this.videos = row.videos || [];
+    this.videoThumbnails = row.video_thumbnails || [];
     this.createdAt = row.created_at;
     this.updatedAt = row.updated_at;
-    this.images = row.images || []; // will be filled separately
   }
 
   // Create new house
   static async create(data) {
     const {
-      landlordId, name, status, type, bedrooms, description, rentPrice, depositAmount,
-      locationAddress, latitude, longitude, region, district, division, ward, village, street,
+      landlordId, name, status, type, bedrooms, description,
+      firstName, lastName, phone,
+      rentPrice, depositAmount,
+      locationAddress, latitude, longitude,
+      region, district, division, ward, village, street,
       waterIncluded, electricityIncluded, internetIncluded, nearbyAmenities,
       hasCeiling, hasAluminium, hasCeilingBoard, hasTiles, hasFence,
       layoutType, hasPrivateBathroom, hasPrivateToilet, hasPrivateKitchen,
-      isSharedBathroom, isSharedToilet, isSharedKitchen, numberOfSharedUnits
+      isSharedBathroom, isSharedToilet, isSharedKitchen, numberOfSharedUnits,
+      videos = [], videoThumbnails = []
     } = data;
 
     let geom = null;
@@ -61,31 +71,41 @@ class House {
 
     const query = `
       INSERT INTO houses (
-        landlord_id, name, status, type, bedrooms, description, rent_price, deposit_amount,
-        location_address, latitude, longitude, geom, region, district, division, ward, village, street,
+        landlord_id, name, status, type, bedrooms, description,
+        first_name, last_name, phone,
+        rent_price, deposit_amount,
+        location_address, latitude, longitude, geom,
+        region, district, division, ward, village, street,
         water_included, electricity_included, internet_included, nearby_amenities,
         has_ceiling, has_aluminium, has_ceiling_board, has_tiles, has_fence,
         layout_type, has_private_bathroom, has_private_toilet, has_private_kitchen,
-        is_shared_bathroom, is_shared_toilet, is_shared_kitchen, number_of_shared_units
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,${geom || 'NULL'},$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34)
+        is_shared_bathroom, is_shared_toilet, is_shared_kitchen, number_of_shared_units,
+        videos, video_thumbnails
+      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,${geom || 'NULL'},$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37)
       RETURNING *
     `;
     const values = [
-      landlordId, name, status || 'Inapatikana', type, bedrooms, description, rentPrice, depositAmount,
-      locationAddress, latitude, longitude, region, district, division, ward, village, street,
-      waterIncluded || false, electricityIncluded || false, internetIncluded || false, nearbyAmenities,
-      hasCeiling || false, hasAluminium || false, hasCeilingBoard || false, hasTiles || false, hasFence || false,
-      layoutType || 'self_container', hasPrivateBathroom ?? true, hasPrivateToilet ?? true, hasPrivateKitchen ?? true,
-      isSharedBathroom || false, isSharedToilet || false, isSharedKitchen || false, numberOfSharedUnits
+      landlordId || null, name, status || 'Inapatikana', type, bedrooms, description,
+      firstName, lastName, phone,
+      rentPrice, depositAmount,
+      locationAddress, latitude, longitude,
+      region, district, division, ward, village, street,
+      waterIncluded ?? false, electricityIncluded ?? false, internetIncluded ?? false, nearbyAmenities,
+      hasCeiling ?? false, hasAluminium ?? false, hasCeilingBoard ?? false, hasTiles ?? false, hasFence ?? false,
+      layoutType || 'self_container',
+      hasPrivateBathroom ?? true, hasPrivateToilet ?? true, hasPrivateKitchen ?? true,
+      isSharedBathroom ?? false, isSharedToilet ?? false, isSharedKitchen ?? false, numberOfSharedUnits,
+      videos, videoThumbnails
     ];
     const result = await pool.query(query, values);
     return new House(result.rows[0]);
   }
 
-  // Find house by ID with images
+  // Find by ID with images, videos, thumbnails
   static async findById(id) {
     const query = `
-      SELECT h.*, COALESCE(array_agg(hi.image_url) FILTER (WHERE hi.image_url IS NOT NULL), '{}') as images
+      SELECT h.*, 
+        COALESCE(array_agg(DISTINCT hi.image_url) FILTER (WHERE hi.image_url IS NOT NULL), '{}') as images
       FROM houses h
       LEFT JOIN house_images hi ON h.id = hi.house_id
       WHERE h.id = $1
@@ -96,10 +116,11 @@ class House {
     return new House(result.rows[0]);
   }
 
-  // Get all houses with filters (basic, without university distance - used internally)
+  // Get all houses with filters
   static async findAll(filters = {}) {
     let query = `
-      SELECT h.*, COALESCE(array_agg(hi.image_url) FILTER (WHERE hi.image_url IS NOT NULL), '{}') as images
+      SELECT h.*, 
+        COALESCE(array_agg(DISTINCT hi.image_url) FILTER (WHERE hi.image_url IS NOT NULL), '{}') as images
       FROM houses h
       LEFT JOIN house_images hi ON h.id = hi.house_id
       WHERE 1=1
@@ -128,9 +149,9 @@ class House {
       values.push(filters.type);
     }
     if (filters.search) {
-      query += ` AND (h.name ILIKE $${idx++} OR h.location_address ILIKE $${idx++} OR h.ward ILIKE $${idx++})`;
+      query += ` AND (h.name ILIKE $${idx++} OR h.location_address ILIKE $${idx++} OR h.ward ILIKE $${idx++} OR h.first_name ILIKE $${idx++} OR h.last_name ILIKE $${idx++})`;
       const pattern = `%${filters.search}%`;
-      values.push(pattern, pattern, pattern);
+      values.push(pattern, pattern, pattern, pattern, pattern);
     }
 
     query += ` GROUP BY h.id ORDER BY h.created_at DESC`;
@@ -138,15 +159,18 @@ class House {
     return result.rows.map(row => new House(row));
   }
 
-  // Update house (partial)
+  // Update house (partial) - pamoja na first_name, last_name, phone, videos, video_thumbnails
   async update(updates) {
     const allowedFields = [
-      'name', 'status', 'type', 'bedrooms', 'description', 'rent_price', 'deposit_amount',
+      'name', 'status', 'type', 'bedrooms', 'description',
+      'first_name', 'last_name', 'phone',
+      'rent_price', 'deposit_amount',
       'location_address', 'region', 'district', 'division', 'ward', 'village', 'street',
       'water_included', 'electricity_included', 'internet_included', 'nearby_amenities',
       'has_ceiling', 'has_aluminium', 'has_ceiling_board', 'has_tiles', 'has_fence',
       'layout_type', 'has_private_bathroom', 'has_private_toilet', 'has_private_kitchen',
-      'is_shared_bathroom', 'is_shared_toilet', 'is_shared_kitchen', 'number_of_shared_units'
+      'is_shared_bathroom', 'is_shared_toilet', 'is_shared_kitchen', 'number_of_shared_units',
+      'videos', 'video_thumbnails'
     ];
     const setClauses = [];
     const values = [];
@@ -170,9 +194,57 @@ class House {
     return new House(result.rows[0]);
   }
 
-  // Delete house (cascades to images)
+  // Delete house
   async delete() {
     await pool.query('DELETE FROM houses WHERE id = $1', [this.id]);
+  }
+
+  // Helper: Convert to JSON compatible with Flutter HouseData
+  toJSON() {
+    return {
+      id: this.id.toString(),
+      name: this.name,
+      status: this.status,
+      type: this.type,
+      bedrooms: this.bedrooms,
+      description: this.description,
+      firstName: this.firstName,
+      lastName: this.lastName,
+      phone: this.phone,
+      rentPrice: this.rentPrice,
+      depositAmount: this.depositAmount,
+      location: this.location,
+      address: this.address,
+      latitude: this.latitude,
+      longitude: this.longitude,
+      region: this.region,
+      district: this.district,
+      division: this.division,
+      ward: this.ward,
+      village: this.village,
+      street: this.street,
+      images: this.images,
+      videos: this.videos,
+      videoThumbnails: this.videoThumbnails,
+      waterIncluded: this.waterIncluded,
+      electricityIncluded: this.electricityIncluded,
+      internetIncluded: this.internetIncluded,
+      nearbyAmenities: this.nearbyAmenities,
+      hasCeiling: this.hasCeiling,
+      hasAluminium: this.hasAluminium,
+      hasCeilingBoard: this.hasCeilingBoard,
+      hasTiles: this.hasTiles,
+      hasFence: this.hasFence,
+      layoutType: this.layoutType,
+      hasPrivateBathroom: this.hasPrivateBathroom,
+      hasPrivateToilet: this.hasPrivateToilet,
+      hasPrivateKitchen: this.hasPrivateKitchen,
+      isSharedBathroom: this.isSharedBathroom,
+      isSharedToilet: this.isSharedToilet,
+      isSharedKitchen: this.isSharedKitchen,
+      numberOfSharedUnits: this.numberOfSharedUnits,
+      createdAt: this.createdAt ? this.createdAt.toISOString() : null,
+    };
   }
 }
 
