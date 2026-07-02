@@ -1,12 +1,5 @@
 const pool = require('../config/db');
-const cloudinary = require('cloudinary').v2;
-
-// Configure Cloudinary (fanya hivi mara moja kwenye app.js au hapa)
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-});
+const { deleteFromSpaces } = require('../services/imageUploadService');
 
 class House {
   constructor(row) {
@@ -311,25 +304,15 @@ class House {
     return this;
   }
 
-  // Delete house and all its media from Cloudinary and DB
+  // Delete house and all its media from DigitalOcean Spaces and DB
   async delete() {
     // Load current media
     await this.loadMedia();
     const allUrls = [...this.images, ...this.videos, ...this.videoThumbnails];
 
-    // Delete from Cloudinary
+    // Delete from DigitalOcean Spaces
     for (const url of allUrls) {
-      try {
-        const parts = url.split('/upload/');
-        if (parts.length < 2) continue;
-        let publicIdWithVersion = parts[1];
-        let publicId = publicIdWithVersion.split('/').slice(1).join('/');
-        publicId = publicId.replace(/\.[^/.]+$/, '');
-        const resourceType = url.includes('video') ? 'video' : 'image';
-        await cloudinary.uploader.destroy(publicId, { resource_type: resourceType });
-      } catch (err) {
-        console.error(`Failed to delete from Cloudinary: ${url}`, err);
-      }
+      await deleteFromSpaces(url);
     }
 
     // Delete from database (cascade will remove related media)

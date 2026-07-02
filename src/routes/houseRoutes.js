@@ -18,12 +18,6 @@ const {
 const router = express.Router();
 
 // ======================
-// PUBLIC ROUTES (hakuna ulinzi)
-// ======================
-router.get('/', getAllHouses);
-router.get('/:id', getHouseById);
-
-// ======================
 // PROTECTED ROUTES (zinahitaji uthibitishaji na ruhusa za landlord)
 // ======================
 router.post('/upload-media', authMiddleware, landlordOnly, upload.array('files', 20), uploadMedia);
@@ -38,5 +32,11 @@ router.post('/:id/videos', authMiddleware, landlordOnly, addHouseVideo);
 
 router.delete('/images/:imageId', authMiddleware, landlordOnly, deleteHouseImage);
 router.delete('/videos/:videoId', authMiddleware, landlordOnly, deleteHouseVideo);
+
+// ======================
+// PUBLIC ROUTES (hakuna ulinzi)
+// ======================
+router.get('/', getAllHouses);
+router.get('/:id', getHouseById);
 
 module.exports = router;

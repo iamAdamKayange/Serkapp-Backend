@@ -1,35 +1,6 @@
 // src/controllers/houseController.js
 const pool = require('../config/db');
-const { uploadMultiple } = require('../services/imageUploadService');
-const cloudinary = require('cloudinary').v2;
-
-// Helper: extract public_id from Cloudinary URL
-const extractPublicIdFromUrl = (url) => {
-  if (!url) return null;
-  const parts = url.split('/');
-  const versionPart = parts.find(part => part.startsWith('v'));
-  const versionIndex = parts.indexOf(versionPart);
-  if (versionIndex !== -1 && parts.length > versionIndex + 1) {
-    const filename = parts[versionIndex + 1];
-    const publicId = filename.substring(0, filename.lastIndexOf('.'));
-    const folderParts = parts.slice(versionIndex + 2, -1);
-    return folderParts.length ? `${folderParts.join('/')}/${publicId}` : publicId;
-  }
-  return null;
-};
-
-// Helper: delete from Cloudinary by URL
-const deleteFromCloudinary = async (url) => {
-  const publicId = extractPublicIdFromUrl(url);
-  if (!publicId) return;
-  try {
-    const resourceType = url.includes('/video/upload/') ? 'video' : 'image';
-    await cloudinary.uploader.destroy(publicId, { resource_type: resourceType });
-    console.log(`Deleted from Cloudinary: ${publicId} (${resourceType})`);
-  } catch (err) {
-    console.error(`Failed to delete ${url}:`, err.message);
-  }
-};
+const { uploadMultiple, deleteFromSpaces } = require('../services/imageUploadService');
 
 // ========== 1. CREATE HOUSE ==========
 exports.createHouse = async (req, res, next) => {
@@ -54,8 +25,9 @@ exports.createHouse = async (req, res, next) => {
     return res.status(400).json({ error: 'Jina maarufu, bei na anwani zinahitajika.' });
   }
 
+  const client = await pool.connect();
   try {
-    await pool.query('BEGIN');
+    await client.query('BEGIN');
 
     const hasValidCoords = latitude != null && longitude != null && !isNaN(latitude) && !isNaN(longitude);
 
@@ -99,37 +71,39 @@ exports.createHouse = async (req, res, next) => {
     ];
 
     const finalValues = hasValidCoords ? [...baseValues, longitude, latitude] : baseValues;
-    const result = await pool.query(insertQuery, finalValues);
+    const result = await client.query(insertQuery, finalValues);
     const houseId = result.rows[0].id;
 
     // Save images
     for (let i = 0; i < imageUrls.length; i++) {
-      await pool.query(
+      await client.query(
         `INSERT INTO house_images (house_id, image_url, display_order) VALUES ($1, $2, $3)`,
         [houseId, imageUrls[i], i]
       );
     }
     // Save videos
     for (let i = 0; i < videoUrls.length; i++) {
-      await pool.query(
+      await client.query(
         `INSERT INTO house_videos (house_id, video_url, display_order) VALUES ($1, $2, $3)`,
         [houseId, videoUrls[i], i]
       );
     }
     // Save video thumbnails
     for (let i = 0; i < videoThumbnails.length; i++) {
-      await pool.query(
+      await client.query(
         `INSERT INTO house_video_thumbnails (house_id, thumbnail_url, display_order) VALUES ($1, $2, $3)`,
         [houseId, videoThumbnails[i], i]
       );
     }
 
-    await pool.query('COMMIT');
+    await client.query('COMMIT');
     res.status(201).json({ message: 'Nyumba imeundwa kikamilifu!', houseId });
   } catch (err) {
-    await pool.query('ROLLBACK');
+    await client.query('ROLLBACK');
     console.error('Create house error:', err);
     next(err);
+  } finally {
+    client.release();
   }
 };
 
@@ -372,7 +346,7 @@ exports.updateHouse = async (req, res, next) => {
   } catch (err) { next(err); }
 };
 
-// ========== 7. DELETE HOUSE (with Cloudinary cleanup) ==========
+// ========== 7. DELETE HOUSE (with Spaces cleanup) ==========
 exports.deleteHouse = async (req, res, next) => {
   const { id } = req.params;
   const landlordId = req.user.id;
@@ -385,14 +359,14 @@ exports.deleteHouse = async (req, res, next) => {
     const videos = await pool.query(`SELECT video_url FROM house_videos WHERE house_id = $1`, [id]);
     const thumbnails = await pool.query(`SELECT thumbnail_url FROM house_video_thumbnails WHERE house_id = $1`, [id]);
 
-    // Delete from Cloudinary
-    for (const img of images.rows) await deleteFromCloudinary(img.image_url);
-    for (const vid of videos.rows) await deleteFromCloudinary(vid.video_url);
-    for (const thumb of thumbnails.rows) await deleteFromCloudinary(thumb.thumbnail_url);
+    // Delete from DigitalOcean Spaces
+    for (const img of images.rows) await deleteFromSpaces(img.image_url);
+    for (const vid of videos.rows) await deleteFromSpaces(vid.video_url);
+    for (const thumb of thumbnails.rows) await deleteFromSpaces(thumb.thumbnail_url);
 
     // Delete house (cascade will remove media records)
     await pool.query(`DELETE FROM houses WHERE id = $1`, [id]);
-    res.json({ message: 'Nyumba imefutwa pamoja na faili zake zote Cloudinary.' });
+    res.json({ message: 'Nyumba imefutwa pamoja na faili zake zote DigitalOcean Spaces.' });
   } catch (err) { next(err); }
 };
 
@@ -449,9 +423,9 @@ exports.deleteHouseImage = async (req, res, next) => {
     const houseId = image.rows[0].house_id;
     const ownerCheck = await pool.query(`SELECT id FROM houses WHERE id = $1 AND landlord_id = $2`, [houseId, landlordId]);
     if (ownerCheck.rows.length === 0) return res.status(403).json({ error: 'Huna ruhusa' });
-    await deleteFromCloudinary(image.rows[0].image_url);
+    await deleteFromSpaces(image.rows[0].image_url);
     await pool.query(`DELETE FROM house_images WHERE id = $1`, [imageId]);
-    res.json({ message: 'Picha imefutwa kwenye database na Cloudinary.' });
+    res.json({ message: 'Picha imefutwa kwenye database na DigitalOcean Spaces.' });
   } catch (err) { next(err); }
 };
 
@@ -465,10 +439,10 @@ exports.deleteHouseVideo = async (req, res, next) => {
     const houseId = video.rows[0].house_id;
     const ownerCheck = await pool.query(`SELECT id FROM houses WHERE id = $1 AND landlord_id = $2`, [houseId, landlordId]);
     if (ownerCheck.rows.length === 0) return res.status(403).json({ error: 'Huna ruhusa' });
-    await deleteFromCloudinary(video.rows[0].video_url);
+    await deleteFromSpaces(video.rows[0].video_url);
     // Also delete associated thumbnails
     await pool.query(`DELETE FROM house_video_thumbnails WHERE house_id = $1 AND display_order = (SELECT display_order FROM house_videos WHERE id = $2)`, [houseId, videoId]);
     await pool.query(`DELETE FROM house_videos WHERE id = $1`, [videoId]);
-    res.json({ message: 'Video imefutwa kwenye database na Cloudinary.' });
+    res.json({ message: 'Video imefutwa kwenye database na DigitalOcean Spaces.' });
   } catch (err) { next(err); }
 };

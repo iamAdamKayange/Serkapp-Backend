@@ -24,7 +24,7 @@ exports.getMyRequests = async (req, res, next) => {
   const tenantId = req.user.id;
   try {
     const result = await pool.query(
-      `SELECT ra.*, h.name as house_name, h.location_address 
+      `SELECT ra.*, h.brand_name as house_name, h.location_address 
        FROM rental_agreements ra
        JOIN houses h ON ra.house_id = h.id
        WHERE ra.tenant_id = $1
@@ -40,7 +40,7 @@ exports.getLandlordRequests = async (req, res, next) => {
   const landlordId = req.user.id;
   try {
     const result = await pool.query(
-      `SELECT ra.*, h.name as house_name, u.first_name, u.last_name, u.phone as tenant_phone
+      `SELECT ra.*, h.brand_name as house_name, u.first_name, u.last_name, u.phone as tenant_phone
        FROM rental_agreements ra
        JOIN houses h ON ra.house_id = h.id
        JOIN users u ON ra.tenant_id = u.id

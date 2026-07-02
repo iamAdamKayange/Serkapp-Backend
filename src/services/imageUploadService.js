@@ -1,79 +1,120 @@
-const cloudinary = require('cloudinary').v2;
+const path = require('path');
+const crypto = require('crypto');
+const { S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
 
-// config...
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
+const requiredEnv = [
+  'SPACES_KEY',
+  'SPACES_SECRET',
+  'SPACES_ENDPOINT',
+  'SPACES_REGION',
+  'SPACES_BUCKET',
+  'SPACES_CDN',
+];
+
+const getMissingEnv = () => requiredEnv.filter((key) => !process.env[key]);
+
+const spacesClient = new S3Client({
+  endpoint: process.env.SPACES_ENDPOINT,
+  region: process.env.SPACES_REGION,
+  credentials: {
+    accessKeyId: process.env.SPACES_KEY || '',
+    secretAccessKey: process.env.SPACES_SECRET || '',
+  },
 });
 
-// Extract public ID from Cloudinary URL
-const getPublicIdFromUrl = (url) => {
+const normalizeCdnBase = () => (process.env.SPACES_CDN || '').replace(/\/+$/, '');
+
+const sanitizeFilename = (filename) => {
+  const extension = path.extname(filename || '').toLowerCase();
+  const baseName = path
+    .basename(filename || 'file', extension)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+
+  return `${baseName || 'media'}-${crypto.randomUUID()}${extension}`;
+};
+
+const getFolderForMime = (mimeType = '') => (mimeType.startsWith('video/') ? 'videos' : 'images');
+
+const getKeyFromUrl = (url) => {
+  if (!url) return null;
+
   try {
-    // URL format: https://res.cloudinary.com/cloud_name/image/upload/v1234567890/folder/filename.jpg
-    const parts = url.split('/');
-    const uploadIndex = parts.findIndex(part => part === 'upload');
-    if (uploadIndex === -1) return null;
-    // Get everything after 'upload' (skip version part v123...)
-    const publicIdWithExt = parts.slice(uploadIndex + 2).join('/');
-    // Remove file extension
-    const lastDot = publicIdWithExt.lastIndexOf('.');
-    return lastDot !== -1 ? publicIdWithExt.substring(0, lastDot) : publicIdWithExt;
-  } catch (err) {
-    console.error('Error extracting public ID:', err);
+    const parsedUrl = new URL(url);
+    const cdnBase = normalizeCdnBase();
+    const endpoint = process.env.SPACES_ENDPOINT || '';
+    const bucket = process.env.SPACES_BUCKET || '';
+
+    if (cdnBase && url.startsWith(`${cdnBase}/`)) {
+      return decodeURIComponent(url.slice(cdnBase.length + 1));
+    }
+
+    if (endpoint && url.startsWith(endpoint)) {
+      const pathParts = parsedUrl.pathname.replace(/^\/+/, '').split('/');
+      if (pathParts[0] === bucket) pathParts.shift();
+      return decodeURIComponent(pathParts.join('/'));
+    }
+
+    return decodeURIComponent(parsedUrl.pathname.replace(/^\/+/, ''));
+  } catch (error) {
+    console.error('Invalid Spaces URL:', error.message);
     return null;
   }
 };
 
-// Delete file from Cloudinary
-const deleteFromCloudinary = async (url, resourceType = 'image') => {
-  try {
-    const publicId = getPublicIdFromUrl(url);
-    if (!publicId) {
-      console.error('Could not extract public ID from URL:', url);
-      return false;
-    }
-    console.log(`🗑️ Deleting from Cloudinary: ${publicId} (${resourceType})`);
-    const result = await cloudinary.uploader.destroy(publicId, { resource_type: resourceType });
-    console.log('Cloudinary delete result:', result);
-    return result.result === 'ok';
-  } catch (error) {
-    console.error('Error deleting from Cloudinary:', error);
-    return false;
+const uploadToSpaces = async (buffer, originalName, mimeType) => {
+  const missingEnv = getMissingEnv();
+  if (missingEnv.length > 0) {
+    throw new Error(`DigitalOcean Spaces is missing environment values: ${missingEnv.join(', ')}`);
   }
+
+  const resourceType = mimeType?.startsWith('video/') ? 'video' : 'image';
+  const key = `serkapp_media/${getFolderForMime(mimeType)}/${sanitizeFilename(originalName)}`;
+
+  await spacesClient.send(
+    new PutObjectCommand({
+      Bucket: process.env.SPACES_BUCKET,
+      Key: key,
+      Body: buffer,
+      ACL: 'public-read',
+      ContentType: mimeType || 'application/octet-stream',
+    })
+  );
+
+  return {
+    url: `${normalizeCdnBase()}/${encodeURI(key)}`,
+    key,
+    resourceType,
+  };
 };
 
-// Upload to Cloudinary - also return public_id
-const uploadToCloudinary = (buffer, originalName) => {
-  return new Promise((resolve, reject) => {
-    const isVideo = originalName.match(/\.(mp4|mov|avi|webm|3gp)$/i) !== null;
-    const resourceType = isVideo ? 'video' : 'image';
+const deleteFromSpaces = async (url) => {
+  const key = getKeyFromUrl(url);
+  if (!key) return false;
 
-    const uploadStream = cloudinary.uploader.upload_stream(
-      {
-        folder: 'serkapp_media',
-        resource_type: resourceType,
-      },
-      (error, result) => {
-        if (error) return reject(error);
-        resolve({
-          url: result.secure_url,
-          publicId: result.public_id,
-          resourceType,
-        });
-      }
+  try {
+    await spacesClient.send(
+      new DeleteObjectCommand({
+        Bucket: process.env.SPACES_BUCKET,
+        Key: key,
+      })
     );
-    uploadStream.end(buffer);
-  });
+    return true;
+  } catch (error) {
+    console.error(`Failed to delete Spaces object ${key}:`, error.message);
+    return false;
+  }
 };
 
 const uploadMultiple = async (files) => {
   const results = [];
   for (const file of files) {
-    const result = await uploadToCloudinary(file.buffer, file.originalname);
+    const result = await uploadToSpaces(file.buffer, file.originalname, file.mimetype);
     results.push(result);
   }
   return results;
 };
 
-module.exports = { uploadToCloudinary, uploadMultiple, deleteFromCloudinary };
+module.exports = { uploadToSpaces, uploadMultiple, deleteFromSpaces };
