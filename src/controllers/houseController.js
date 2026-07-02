@@ -1,15 +1,11 @@
-// src/controllers/houseController.js
 const pool = require('../config/db');
-const { uploadMultiple, deleteFromSpaces } = require('../services/imageUploadService');
+const { uploadMultiple, deleteFromSpaces, uploadToSpaces } = require('../services/imageUploadService');
 
 // ========== 1. CREATE HOUSE ==========
 exports.createHouse = async (req, res, next) => {
   const landlordId = req.user.id;
   const {
-    firstName,          // brand_name
-    lastName,           // house_number
-    name,               // owner_name
-    phone,
+    firstName, lastName, name, phone,
     status, type, bedrooms, description,
     rentPrice, depositAmount,
     locationAddress, latitude, longitude,
@@ -121,74 +117,25 @@ exports.uploadMedia = async (req, res, next) => {
   }
 };
 
-// Helper: build house object from DB row
-const buildHouseObject = async (row) => {
-  // Fetch images
-  const imagesRes = await pool.query(
-    `SELECT image_url FROM house_images WHERE house_id = $1 ORDER BY display_order`,
-    [row.id]
-  );
-  const images = imagesRes.rows.map(r => r.image_url);
-  // Fetch videos
-  const videosRes = await pool.query(
-    `SELECT video_url FROM house_videos WHERE house_id = $1 ORDER BY display_order`,
-    [row.id]
-  );
-  const videos = videosRes.rows.map(r => r.video_url);
-  // Fetch thumbnails
-  const thumbsRes = await pool.query(
-    `SELECT thumbnail_url FROM house_video_thumbnails WHERE house_id = $1 ORDER BY display_order`,
-    [row.id]
-  );
-  const videoThumbnails = thumbsRes.rows.map(r => r.thumbnail_url);
-
-  return {
-    id: row.id.toString(),
-    name: row.owner_name,                 // jina la mwenye nyumba
-    firstName: row.brand_name,            // jina maarufu
-    lastName: row.house_number,           // namba ya nyumba
-    phone: row.phone,
-    status: row.status,
-    type: row.type,
-    bedrooms: row.bedrooms,
-    description: row.description,
-    rentPrice: parseFloat(row.rent_price),
-    depositAmount: row.deposit_amount ? parseFloat(row.deposit_amount) : null,
-    location: row.location_address,
-    address: row.location_address,
-    latitude: row.latitude ? parseFloat(row.latitude) : null,
-    longitude: row.longitude ? parseFloat(row.longitude) : null,
-    region: row.region,
-    district: row.district,
-    division: row.division,
-    ward: row.ward,
-    village: row.village,
-    street: row.street,
-    images: images,
-    videos: videos,
-    videoThumbnails: videoThumbnails,
-    waterIncluded: row.water_included,
-    electricityIncluded: row.electricity_included,
-    internetIncluded: row.internet_included,
-    nearbyAmenities: row.nearby_amenities,
-    hasCeiling: row.has_ceiling,
-    hasAluminium: row.has_aluminium,
-    hasCeilingBoard: row.has_ceiling_board,
-    hasTiles: row.has_tiles,
-    hasFence: row.has_fence,
-    layoutType: row.layout_type,
-    hasPrivateBathroom: row.has_private_bathroom,
-    hasPrivateToilet: row.has_private_toilet,
-    hasPrivateKitchen: row.has_private_kitchen,
-    isSharedBathroom: row.is_shared_bathroom,
-    isSharedToilet: row.is_shared_toilet,
-    isSharedKitchen: row.is_shared_kitchen,
-    numberOfSharedUnits: row.number_of_shared_units,
-    createdAt: row.created_at
-  };
+// ========== 2.5 UPLOAD THUMBNAIL (NEW) ==========
+exports.uploadThumbnail = async (req, res, next) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'Hakuna faili iliyopakiwa.' });
+  }
+  try {
+    const result = await uploadToSpaces(
+      req.file.buffer,
+      req.file.originalname,
+      req.file.mimetype
+    );
+    res.status(200).json({ url: result.url });
+  } catch (error) {
+    console.error('Thumbnail upload error:', error);
+    res.status(500).json({ error: error.message });
+  }
 };
 
-// ========== 3. GET ALL HOUSES ==========
+// ========== 3. GET ALL HOUSES (with aggregated media) ==========
 exports.getAllHouses = async (req, res, next) => {
   try {
     const query = `
@@ -204,18 +151,71 @@ exports.getAllHouses = async (req, res, next) => {
         h.is_shared_bathroom, h.is_shared_toilet, h.is_shared_kitchen, h.number_of_shared_units,
         h.created_at, h.updated_at,
         ST_Y(h.geom) AS latitude,
-        ST_X(h.geom) AS longitude
+        ST_X(h.geom) AS longitude,
+        COALESCE(
+          json_agg(DISTINCT hi.image_url) FILTER (WHERE hi.image_url IS NOT NULL),
+          '[]'
+        ) AS images,
+        COALESCE(
+          json_agg(DISTINCT hv.video_url) FILTER (WHERE hv.video_url IS NOT NULL),
+          '[]'
+        ) AS videos,
+        COALESCE(
+          json_agg(DISTINCT hvt.thumbnail_url) FILTER (WHERE hvt.thumbnail_url IS NOT NULL),
+          '[]'
+        ) AS video_thumbnails
       FROM houses h
+      LEFT JOIN house_images hi ON hi.house_id = h.id
+      LEFT JOIN house_videos hv ON hv.house_id = h.id
+      LEFT JOIN house_video_thumbnails hvt ON hvt.house_id = h.id
       WHERE h.status = 'Inapatikana'
+      GROUP BY h.id
       ORDER BY h.created_at DESC
     `;
     const result = await pool.query(query);
-    const houses = [];
-    for (const row of result.rows) {
-      houses.push(await buildHouseObject(row));
-    }
-    res.json(houses);
-  } catch (err) { next(err); }
+    res.json(result.rows);
+  } catch (err) { 
+    console.error('getAllHouses error:', err);
+    next(err); 
+  }
+};
+
+// ========== 3.5 GET VIDEO FEED (NEW - lightweight) ==========
+exports.getVideoFeed = async (req, res, next) => {
+  try {
+    const query = `
+      SELECT 
+        h.id,
+        h.brand_name,
+        h.rent_price,
+        h.location_address,
+        h.region,
+        h.district,
+        h.ward,
+        h.street,
+        ST_Y(h.geom) AS latitude,
+        ST_X(h.geom) AS longitude,
+        COALESCE(
+          json_agg(DISTINCT hv.video_url) FILTER (WHERE hv.video_url IS NOT NULL),
+          '[]'
+        ) AS videos,
+        COALESCE(
+          json_agg(DISTINCT hvt.thumbnail_url) FILTER (WHERE hvt.thumbnail_url IS NOT NULL),
+          '[]'
+        ) AS video_thumbnails
+      FROM houses h
+      LEFT JOIN house_videos hv ON hv.house_id = h.id
+      LEFT JOIN house_video_thumbnails hvt ON hvt.house_id = h.id
+      WHERE h.status = 'Inapatikana'
+      GROUP BY h.id
+      ORDER BY h.created_at DESC
+    `;
+    const result = await pool.query(query);
+    res.json(result.rows);
+  } catch (err) { 
+    console.error('getVideoFeed error:', err);
+    next(err); 
+  }
 };
 
 // ========== 4. GET HOUSE BY ID ==========
@@ -235,15 +235,33 @@ exports.getHouseById = async (req, res, next) => {
         h.is_shared_bathroom, h.is_shared_toilet, h.is_shared_kitchen, h.number_of_shared_units,
         h.created_at, h.updated_at,
         ST_Y(h.geom) AS latitude,
-        ST_X(h.geom) AS longitude
+        ST_X(h.geom) AS longitude,
+        COALESCE(
+          json_agg(DISTINCT hi.image_url) FILTER (WHERE hi.image_url IS NOT NULL),
+          '[]'
+        ) AS images,
+        COALESCE(
+          json_agg(DISTINCT hv.video_url) FILTER (WHERE hv.video_url IS NOT NULL),
+          '[]'
+        ) AS videos,
+        COALESCE(
+          json_agg(DISTINCT hvt.thumbnail_url) FILTER (WHERE hvt.thumbnail_url IS NOT NULL),
+          '[]'
+        ) AS video_thumbnails
       FROM houses h
+      LEFT JOIN house_images hi ON hi.house_id = h.id
+      LEFT JOIN house_videos hv ON hv.house_id = h.id
+      LEFT JOIN house_video_thumbnails hvt ON hvt.house_id = h.id
       WHERE h.id = $1
+      GROUP BY h.id
     `;
     const result = await pool.query(query, [id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Nyumba haikupatikana' });
-    const house = await buildHouseObject(result.rows[0]);
-    res.json(house);
-  } catch (err) { next(err); }
+    res.json(result.rows[0]);
+  } catch (err) { 
+    console.error('getHouseById error:', err);
+    next(err); 
+  }
 };
 
 // ========== 5. GET MY HOUSES (Landlord) ==========
@@ -262,18 +280,33 @@ exports.getMyHouses = async (req, res, next) => {
         h.is_shared_bathroom, h.is_shared_toilet, h.is_shared_kitchen, h.number_of_shared_units,
         h.created_at, h.updated_at,
         ST_Y(h.geom) AS latitude,
-        ST_X(h.geom) AS longitude
+        ST_X(h.geom) AS longitude,
+        COALESCE(
+          json_agg(DISTINCT hi.image_url) FILTER (WHERE hi.image_url IS NOT NULL),
+          '[]'
+        ) AS images,
+        COALESCE(
+          json_agg(DISTINCT hv.video_url) FILTER (WHERE hv.video_url IS NOT NULL),
+          '[]'
+        ) AS videos,
+        COALESCE(
+          json_agg(DISTINCT hvt.thumbnail_url) FILTER (WHERE hvt.thumbnail_url IS NOT NULL),
+          '[]'
+        ) AS video_thumbnails
       FROM houses h
+      LEFT JOIN house_images hi ON hi.house_id = h.id
+      LEFT JOIN house_videos hv ON hv.house_id = h.id
+      LEFT JOIN house_video_thumbnails hvt ON hvt.house_id = h.id
       WHERE h.landlord_id = $1
+      GROUP BY h.id
       ORDER BY h.created_at DESC
     `;
     const result = await pool.query(query, [req.user.id]);
-    const houses = [];
-    for (const row of result.rows) {
-      houses.push(await buildHouseObject(row));
-    }
-    res.json(houses);
-  } catch (err) { next(err); }
+    res.json(result.rows);
+  } catch (err) { 
+    console.error('getMyHouses error:', err);
+    next(err); 
+  }
 };
 
 // ========== 6. UPDATE HOUSE ==========
@@ -285,7 +318,6 @@ exports.updateHouse = async (req, res, next) => {
     const ownerCheck = await pool.query(`SELECT id FROM houses WHERE id = $1 AND landlord_id = $2`, [id, landlordId]);
     if (ownerCheck.rows.length === 0) return res.status(403).json({ error: 'Huna ruhusa' });
 
-    // Map frontend fields to DB columns
     const fieldMap = {
       firstName: 'brand_name',
       lastName: 'house_number',
@@ -332,7 +364,6 @@ exports.updateHouse = async (req, res, next) => {
         values.push(updates[frontField]);
       }
     }
-    // Update geometry if latitude & longitude provided
     if (updates.latitude !== undefined && updates.longitude !== undefined) {
       setClauses.push(`geom = ST_SetSRID(ST_MakePoint($${idx++}, $${idx++}), 4326)`);
       values.push(updates.longitude, updates.latitude);
@@ -343,31 +374,44 @@ exports.updateHouse = async (req, res, next) => {
     const query = `UPDATE houses SET ${setClauses.join(', ')} WHERE id = $${idx} RETURNING id`;
     const result = await pool.query(query, values);
     res.json({ message: 'Nyumba imebadilishwa', houseId: result.rows[0].id });
-  } catch (err) { next(err); }
+  } catch (err) { 
+    console.error('updateHouse error:', err);
+    next(err); 
+  }
 };
 
-// ========== 7. DELETE HOUSE (with Spaces cleanup) ==========
+// ========== 7. DELETE HOUSE ==========
 exports.deleteHouse = async (req, res, next) => {
   const { id } = req.params;
   const landlordId = req.user.id;
+  const client = await pool.connect();
   try {
-    const ownerCheck = await pool.query(`SELECT id FROM houses WHERE id = $1 AND landlord_id = $2`, [id, landlordId]);
-    if (ownerCheck.rows.length === 0) return res.status(403).json({ error: 'Huna ruhusa' });
+    await client.query('BEGIN');
+    
+    const ownerCheck = await client.query(`SELECT id FROM houses WHERE id = $1 AND landlord_id = $2`, [id, landlordId]);
+    if (ownerCheck.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(403).json({ error: 'Huna ruhusa' });
+    }
 
-    // Fetch all media URLs
-    const images = await pool.query(`SELECT image_url FROM house_images WHERE house_id = $1`, [id]);
-    const videos = await pool.query(`SELECT video_url FROM house_videos WHERE house_id = $1`, [id]);
-    const thumbnails = await pool.query(`SELECT thumbnail_url FROM house_video_thumbnails WHERE house_id = $1`, [id]);
+    const images = await client.query(`SELECT image_url FROM house_images WHERE house_id = $1`, [id]);
+    const videos = await client.query(`SELECT video_url FROM house_videos WHERE house_id = $1`, [id]);
+    const thumbnails = await client.query(`SELECT thumbnail_url FROM house_video_thumbnails WHERE house_id = $1`, [id]);
 
-    // Delete from DigitalOcean Spaces
     for (const img of images.rows) await deleteFromSpaces(img.image_url);
     for (const vid of videos.rows) await deleteFromSpaces(vid.video_url);
     for (const thumb of thumbnails.rows) await deleteFromSpaces(thumb.thumbnail_url);
 
-    // Delete house (cascade will remove media records)
-    await pool.query(`DELETE FROM houses WHERE id = $1`, [id]);
+    await client.query(`DELETE FROM houses WHERE id = $1`, [id]);
+    await client.query('COMMIT');
     res.json({ message: 'Nyumba imefutwa pamoja na faili zake zote DigitalOcean Spaces.' });
-  } catch (err) { next(err); }
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('deleteHouse error:', err);
+    next(err);
+  } finally {
+    client.release();
+  }
 };
 
 // ========== 8. ADD IMAGE ==========
@@ -385,7 +429,10 @@ exports.addHouseImage = async (req, res, next) => {
       [id, imageUrl, newOrder]
     );
     res.status(201).json({ message: 'Picha imeongezwa', image: result.rows[0] });
-  } catch (err) { next(err); }
+  } catch (err) { 
+    console.error('addHouseImage error:', err);
+    next(err); 
+  }
 };
 
 // ========== 9. ADD VIDEO ==========
@@ -402,7 +449,6 @@ exports.addHouseVideo = async (req, res, next) => {
       `INSERT INTO house_videos (house_id, video_url, display_order) VALUES ($1, $2, $3) RETURNING *`,
       [id, videoUrl, newOrder]
     );
-    // If thumbnail provided, insert into thumbnails table
     if (thumbnailUrl) {
       await pool.query(
         `INSERT INTO house_video_thumbnails (house_id, thumbnail_url, display_order) VALUES ($1, $2, $3)`,
@@ -410,7 +456,10 @@ exports.addHouseVideo = async (req, res, next) => {
       );
     }
     res.status(201).json({ message: 'Video imeongezwa', video: result.rows[0] });
-  } catch (err) { next(err); }
+  } catch (err) { 
+    console.error('addHouseVideo error:', err);
+    next(err); 
+  }
 };
 
 // ========== 10. DELETE IMAGE ==========
@@ -426,7 +475,10 @@ exports.deleteHouseImage = async (req, res, next) => {
     await deleteFromSpaces(image.rows[0].image_url);
     await pool.query(`DELETE FROM house_images WHERE id = $1`, [imageId]);
     res.json({ message: 'Picha imefutwa kwenye database na DigitalOcean Spaces.' });
-  } catch (err) { next(err); }
+  } catch (err) { 
+    console.error('deleteHouseImage error:', err);
+    next(err); 
+  }
 };
 
 // ========== 11. DELETE VIDEO ==========
@@ -440,9 +492,11 @@ exports.deleteHouseVideo = async (req, res, next) => {
     const ownerCheck = await pool.query(`SELECT id FROM houses WHERE id = $1 AND landlord_id = $2`, [houseId, landlordId]);
     if (ownerCheck.rows.length === 0) return res.status(403).json({ error: 'Huna ruhusa' });
     await deleteFromSpaces(video.rows[0].video_url);
-    // Also delete associated thumbnails
     await pool.query(`DELETE FROM house_video_thumbnails WHERE house_id = $1 AND display_order = (SELECT display_order FROM house_videos WHERE id = $2)`, [houseId, videoId]);
     await pool.query(`DELETE FROM house_videos WHERE id = $1`, [videoId]);
     res.json({ message: 'Video imefutwa kwenye database na DigitalOcean Spaces.' });
-  } catch (err) { next(err); }
+  } catch (err) { 
+    console.error('deleteHouseVideo error:', err);
+    next(err); 
+  }
 };
