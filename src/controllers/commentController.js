@@ -8,18 +8,31 @@ exports.getVideoComments = async (req, res, next) => {
   const userId = req.user?.id || null;
 
   try {
-    // Try to find video by ID or URL
-    const videoCheck = await pool.query(
-      `SELECT id FROM house_videos WHERE id = $1 OR video_url = $1`,
-      [videoId]
-    );
+    // Try to find video by ID first, then by URL
+    let videoQuery = `
+      SELECT id FROM house_videos WHERE id = $1
+    `;
+    let videoResult = await pool.query(videoQuery, [videoId]);
+    
+    if (videoResult.rows.length === 0) {
+      videoQuery = `
+        SELECT id FROM house_videos WHERE video_url = $1
+      `;
+      videoResult = await pool.query(videoQuery, [videoId]);
+    }
+    
+    if (videoResult.rows.length === 0) {
+      videoQuery = `
+        SELECT id FROM house_videos WHERE video_url LIKE $1
+      `;
+      videoResult = await pool.query(videoQuery, [`%${videoId}%`]);
+    }
 
-    // If video not found, return empty array
-    if (videoCheck.rows.length === 0) {
+    if (videoResult.rows.length === 0) {
       return res.json([]);
     }
 
-    const actualVideoId = videoCheck.rows[0].id;
+    const actualVideoId = videoResult.rows[0].id;
 
     // Get all comments for this video
     const query = `
@@ -169,37 +182,35 @@ exports.createComment = async (req, res, next) => {
   }
 
   try {
-    // ✅ FIX: Find video by ID or URL - use UUID directly
-    let actualVideoId = videoId;
+    // Try to find video by ID first, then by URL
+    let videoQuery = `
+      SELECT id FROM house_videos WHERE id = $1
+    `;
+    let videoResult = await pool.query(videoQuery, [videoId]);
     
-    // Check if videoId is a UUID or a generated ID
-    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(videoId);
+    if (videoResult.rows.length === 0) {
+      videoQuery = `
+        SELECT id FROM house_videos WHERE video_url = $1
+      `;
+      videoResult = await pool.query(videoQuery, [videoId]);
+    }
     
-    if (!isUUID) {
-      // If not UUID, try to find by URL
-      const videoCheck = await pool.query(
-        `SELECT id FROM house_videos WHERE video_url = $1`,
-        [videoId]
-      );
-      if (videoCheck.rows.length === 0) {
-        return res.status(404).json({ error: 'Video haikupatikana' });
-      }
-      actualVideoId = videoCheck.rows[0].id;
-    } else {
-      // Check if video exists with this UUID
-      const videoCheck = await pool.query(
-        `SELECT id FROM house_videos WHERE id = $1`,
-        [videoId]
-      );
-      if (videoCheck.rows.length === 0) {
-        return res.status(404).json({ error: 'Video haikupatikana' });
-      }
+    if (videoResult.rows.length === 0) {
+      videoQuery = `
+        SELECT id FROM house_videos WHERE video_url LIKE $1
+      `;
+      videoResult = await pool.query(videoQuery, [`%${videoId}%`]);
     }
 
-    // If parentId is provided, check if parent comment exists
+    if (videoResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Video haikupatikana' });
+    }
+
+    const actualVideoId = videoResult.rows[0].id;
+
     if (parentId) {
       const parentCheck = await pool.query(
-        `SELECT id FROM video_comments WHERE id = $1`,
+        'SELECT id FROM video_comments WHERE id = $1',
         [parentId]
       );
       if (parentCheck.rows.length === 0) {
@@ -216,9 +227,8 @@ exports.createComment = async (req, res, next) => {
 
     const newComment = result.rows[0];
 
-    // Get user info
     const userResult = await pool.query(
-      `SELECT id, first_name, last_name, phone FROM users WHERE id = $1`,
+      'SELECT id, first_name, last_name, phone FROM users WHERE id = $1',
       [userId]
     );
     const user = userResult.rows[0];
@@ -251,7 +261,7 @@ exports.deleteComment = async (req, res, next) => {
 
   try {
     const commentCheck = await pool.query(
-      `SELECT user_id FROM video_comments WHERE id = $1`,
+      'SELECT user_id FROM video_comments WHERE id = $1',
       [commentId]
     );
     if (commentCheck.rows.length === 0) {
@@ -262,7 +272,7 @@ exports.deleteComment = async (req, res, next) => {
       return res.status(403).json({ error: 'Huna ruhusa ya kufuta comment hii' });
     }
 
-    await pool.query(`DELETE FROM video_comments WHERE id = $1`, [commentId]);
+    await pool.query('DELETE FROM video_comments WHERE id = $1', [commentId]);
     res.json({ message: 'Comment imefutwa kikamilifu' });
   } catch (err) {
     console.error('❌ deleteComment error:', err);
@@ -279,7 +289,7 @@ exports.toggleCommentLike = async (req, res, next) => {
 
   try {
     const commentCheck = await pool.query(
-      `SELECT id FROM video_comments WHERE id = $1`,
+      'SELECT id FROM video_comments WHERE id = $1',
       [commentId]
     );
     if (commentCheck.rows.length === 0) {
@@ -287,22 +297,22 @@ exports.toggleCommentLike = async (req, res, next) => {
     }
 
     const likeCheck = await pool.query(
-      `SELECT id FROM comment_likes WHERE comment_id = $1 AND user_id = $2`,
+      'SELECT id FROM comment_likes WHERE comment_id = $1 AND user_id = $2',
       [commentId, userId]
     );
 
     if (likeCheck.rows.length > 0) {
       await pool.query(
-        `DELETE FROM comment_likes WHERE comment_id = $1 AND user_id = $2`,
+        'DELETE FROM comment_likes WHERE comment_id = $1 AND user_id = $2',
         [commentId, userId]
       );
       await pool.query(
-        `UPDATE video_comments SET likes_count = likes_count - 1 WHERE id = $1`,
+        'UPDATE video_comments SET likes_count = likes_count - 1 WHERE id = $1',
         [commentId]
       );
       
       const countResult = await pool.query(
-        `SELECT likes_count FROM video_comments WHERE id = $1`,
+        'SELECT likes_count FROM video_comments WHERE id = $1',
         [commentId]
       );
       
@@ -312,16 +322,16 @@ exports.toggleCommentLike = async (req, res, next) => {
       });
     } else {
       await pool.query(
-        `INSERT INTO comment_likes (comment_id, user_id) VALUES ($1, $2)`,
+        'INSERT INTO comment_likes (comment_id, user_id) VALUES ($1, $2)',
         [commentId, userId]
       );
       await pool.query(
-        `UPDATE video_comments SET likes_count = likes_count + 1 WHERE id = $1`,
+        'UPDATE video_comments SET likes_count = likes_count + 1 WHERE id = $1',
         [commentId]
       );
       
       const countResult = await pool.query(
-        `SELECT likes_count FROM video_comments WHERE id = $1`,
+        'SELECT likes_count FROM video_comments WHERE id = $1',
         [commentId]
       );
       
@@ -344,42 +354,45 @@ exports.toggleVideoLike = async (req, res, next) => {
   const userId = req.user.id;
 
   try {
-    // Find video by ID or URL
-    let actualVideoId = videoId;
-    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(videoId);
+    // Try to find video by ID first, then by URL
+    let videoQuery = `
+      SELECT id FROM house_videos WHERE id = $1
+    `;
+    let videoResult = await pool.query(videoQuery, [videoId]);
     
-    if (!isUUID) {
-      const videoCheck = await pool.query(
-        `SELECT id FROM house_videos WHERE video_url = $1`,
-        [videoId]
-      );
-      if (videoCheck.rows.length === 0) {
-        return res.status(404).json({ error: 'Video not found' });
-      }
-      actualVideoId = videoCheck.rows[0].id;
-    } else {
-      const videoCheck = await pool.query(
-        `SELECT id FROM house_videos WHERE id = $1`,
-        [videoId]
-      );
-      if (videoCheck.rows.length === 0) {
-        return res.status(404).json({ error: 'Video not found' });
-      }
+    if (videoResult.rows.length === 0) {
+      videoQuery = `
+        SELECT id FROM house_videos WHERE video_url = $1
+      `;
+      videoResult = await pool.query(videoQuery, [videoId]);
+    }
+    
+    if (videoResult.rows.length === 0) {
+      videoQuery = `
+        SELECT id FROM house_videos WHERE video_url LIKE $1
+      `;
+      videoResult = await pool.query(videoQuery, [`%${videoId}%`]);
     }
 
+    if (videoResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Video not found' });
+    }
+
+    const actualVideoId = videoResult.rows[0].id;
+
     const likeCheck = await pool.query(
-      `SELECT id FROM video_likes WHERE video_id = $1 AND user_id = $2`,
+      'SELECT id FROM video_likes WHERE video_id = $1 AND user_id = $2',
       [actualVideoId, userId]
     );
 
     if (likeCheck.rows.length > 0) {
       await pool.query(
-        `DELETE FROM video_likes WHERE video_id = $1 AND user_id = $2`,
+        'DELETE FROM video_likes WHERE video_id = $1 AND user_id = $2',
         [actualVideoId, userId]
       );
       
       const countResult = await pool.query(
-        `SELECT COUNT(*) as count FROM video_likes WHERE video_id = $1`,
+        'SELECT COUNT(*) as count FROM video_likes WHERE video_id = $1',
         [actualVideoId]
       );
       
@@ -389,12 +402,12 @@ exports.toggleVideoLike = async (req, res, next) => {
       });
     } else {
       await pool.query(
-        `INSERT INTO video_likes (video_id, user_id) VALUES ($1, $2)`,
+        'INSERT INTO video_likes (video_id, user_id) VALUES ($1, $2)',
         [actualVideoId, userId]
       );
       
       const countResult = await pool.query(
-        `SELECT COUNT(*) as count FROM video_likes WHERE video_id = $1`,
+        'SELECT COUNT(*) as count FROM video_likes WHERE video_id = $1',
         [actualVideoId]
       );
       
@@ -417,22 +430,34 @@ exports.getVideoLikeStatus = async (req, res, next) => {
   const userId = req.user?.id || null;
 
   try {
-    let actualVideoId = videoId;
-    const isUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(videoId);
+    // Try to find video by ID first, then by URL
+    let videoQuery = `
+      SELECT id FROM house_videos WHERE id = $1
+    `;
+    let videoResult = await pool.query(videoQuery, [videoId]);
     
-    if (!isUUID) {
-      const videoCheck = await pool.query(
-        `SELECT id FROM house_videos WHERE video_url = $1`,
-        [videoId]
-      );
-      if (videoCheck.rows.length === 0) {
-        return res.json({ likes_count: 0, is_liked: false });
-      }
-      actualVideoId = videoCheck.rows[0].id;
+    if (videoResult.rows.length === 0) {
+      videoQuery = `
+        SELECT id FROM house_videos WHERE video_url = $1
+      `;
+      videoResult = await pool.query(videoQuery, [videoId]);
+    }
+    
+    if (videoResult.rows.length === 0) {
+      videoQuery = `
+        SELECT id FROM house_videos WHERE video_url LIKE $1
+      `;
+      videoResult = await pool.query(videoQuery, [`%${videoId}%`]);
     }
 
+    if (videoResult.rows.length === 0) {
+      return res.json({ likes_count: 0, is_liked: false });
+    }
+
+    const actualVideoId = videoResult.rows[0].id;
+
     const countResult = await pool.query(
-      `SELECT COUNT(*) as count FROM video_likes WHERE video_id = $1`,
+      'SELECT COUNT(*) as count FROM video_likes WHERE video_id = $1',
       [actualVideoId]
     );
     const likesCount = parseInt(countResult.rows[0].count);
@@ -440,7 +465,7 @@ exports.getVideoLikeStatus = async (req, res, next) => {
     let isLiked = false;
     if (userId) {
       const likeCheck = await pool.query(
-        `SELECT id FROM video_likes WHERE video_id = $1 AND user_id = $2`,
+        'SELECT id FROM video_likes WHERE video_id = $1 AND user_id = $2',
         [actualVideoId, userId]
       );
       isLiked = likeCheck.rows.length > 0;
