@@ -159,6 +159,16 @@ exports.uploadThumbnail = async (req, res, next) => {
 exports.getAllHouses = async (req, res, next) => {
   try {
     const query = `
+      WITH video_like_counts AS (
+        SELECT video_id::text AS video_key, COUNT(*)::int AS likes_count
+        FROM video_likes
+        GROUP BY video_id::text
+      ),
+      video_comment_counts AS (
+        SELECT video_id::text AS video_key, COUNT(*)::int AS comments_count
+        FROM video_comments
+        GROUP BY video_id::text
+      )
       SELECT 
         h.id, h.landlord_id,
         h.brand_name, h.owner_name, h.house_number, h.phone,
@@ -193,6 +203,8 @@ exports.getAllHouses = async (req, res, next) => {
       LEFT JOIN house_images hi ON hi.house_id = h.id
       LEFT JOIN house_videos hv ON hv.house_id = h.id
       LEFT JOIN house_video_thumbnails hvt ON hvt.house_id = h.id
+      LEFT JOIN video_like_counts vl ON vl.video_key = hv.id::text
+      LEFT JOIN video_comment_counts vc ON vc.video_key = hv.id::text
       WHERE h.status = 'Inapatikana'
       GROUP BY h.id
       ORDER BY h.created_at DESC
@@ -209,6 +221,16 @@ exports.getAllHouses = async (req, res, next) => {
 exports.getVideoFeed = async (req, res, next) => {
   try {
     const query = `
+      WITH video_like_counts AS (
+        SELECT video_id::text AS video_key, COUNT(*)::int AS likes_count
+        FROM video_likes
+        GROUP BY video_id::text
+      ),
+      video_comment_counts AS (
+        SELECT video_id::text AS video_key, COUNT(*)::int AS comments_count
+        FROM video_comments
+        GROUP BY video_id::text
+      )
       SELECT 
         h.id,
         h.brand_name,
@@ -239,16 +261,8 @@ exports.getVideoFeed = async (req, res, next) => {
       FROM houses h
       LEFT JOIN house_videos hv ON hv.house_id = h.id
       LEFT JOIN house_video_thumbnails hvt ON hvt.house_id = h.id
-      LEFT JOIN (
-        SELECT video_id, COUNT(*)::int AS likes_count
-        FROM video_likes
-        GROUP BY video_id
-      ) vl ON vl.video_id = hv.id
-      LEFT JOIN (
-        SELECT video_id, COUNT(*)::int AS comments_count
-        FROM video_comments
-        GROUP BY video_id
-      ) vc ON vc.video_id = hv.id
+      LEFT JOIN video_like_counts vl ON vl.video_key = hv.id::text
+      LEFT JOIN video_comment_counts vc ON vc.video_key = hv.id::text
       WHERE h.status = 'Inapatikana'
       GROUP BY h.id
       ORDER BY h.created_at DESC
