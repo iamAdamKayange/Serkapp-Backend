@@ -1,6 +1,9 @@
 require('dotenv').config();
+const http = require('http');
 const app = require('./src/app');
 const pool = require('./src/config/db');
+const { initSocket } = require('./src/services/socketService');
+const { ensureNotificationTables } = require('./src/services/notificationService');
 
 // Validate required environment variables
 const requiredEnvVars = [
@@ -21,6 +24,9 @@ if (missingVars.length > 0) {
 }
 
 const PORT = process.env.PORT || 5000;
+const server = http.createServer(app);
+
+initSocket(server);
 
 pool.connect((err, client, release) => {
   if (err) {
@@ -29,9 +35,15 @@ pool.connect((err, client, release) => {
   } else {
     console.log('✅ Connected to PostgreSQL');
     release();
+    ensureNotificationTables()
+      .then(() => console.log('Notification tables are ready'))
+      .catch((schemaError) => {
+        console.error('Notification schema setup failed:', schemaError);
+        process.exit(1);
+      });
   }
 });
 
-app.listen(PORT, () => {
+server.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
 });

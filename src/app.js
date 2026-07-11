@@ -12,6 +12,7 @@ const paymentRoutes = require('./routes/paymentRoutes');
 const agreementRoutes = require('./routes/agreementRoutes');
 const errorHandler = require('./middleware/errorHandler');
 const commentRoutes = require('./routes/commentRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
 
 const app = express();
 
@@ -39,6 +40,7 @@ app.use('/api/locations', locationRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/agreements', agreementRoutes);
 app.use('/api/comments', commentRoutes);
+app.use('/api/notifications', notificationRoutes);
 
 app.get('/health', (req, res) => res.status(200).json({ status: 'OK' }));
 
@@ -53,7 +55,8 @@ app.get('/', (req, res) => {
       'houses/feed/videos': '/api/houses/feed/videos',
       locations: '/api/locations',
       payments: '/api/payments',
-      agreements: '/api/agreements'
+      agreements: '/api/agreements',
+      notifications: '/api/notifications'
     }
   });
 });

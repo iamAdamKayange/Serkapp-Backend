@@ -1,4 +1,5 @@
 const pool = require('../config/db');
+const { emitToAll } = require('../services/socketService');
 
 // ============================================================
 // GET COMMENTS FOR A VIDEO
@@ -233,7 +234,7 @@ exports.createComment = async (req, res, next) => {
     );
     const user = userResult.rows[0];
 
-    res.status(201).json({
+    const response = {
       ...newComment,
       user: {
         id: user.id,
@@ -244,7 +245,17 @@ exports.createComment = async (req, res, next) => {
       likes_count: 0,
       is_liked: false,
       replies: [],
+    };
+
+    emitToAll('comment:created', {
+      videoId,
+      actualVideoId,
+      houseId,
+      commentId: newComment.id,
+      parentId: parentId || null,
     });
+
+    res.status(201).json(response);
   } catch (err) {
     console.error('❌ createComment error:', err);
     res.status(500).json({ error: err.message });
@@ -261,7 +272,7 @@ exports.deleteComment = async (req, res, next) => {
 
   try {
     const commentCheck = await pool.query(
-      'SELECT user_id FROM video_comments WHERE id = $1',
+      'SELECT user_id, video_id, house_id, parent_id FROM video_comments WHERE id = $1',
       [commentId]
     );
     if (commentCheck.rows.length === 0) {
@@ -272,7 +283,14 @@ exports.deleteComment = async (req, res, next) => {
       return res.status(403).json({ error: 'Huna ruhusa ya kufuta comment hii' });
     }
 
+    const deletedComment = commentCheck.rows[0];
     await pool.query('DELETE FROM video_comments WHERE id = $1', [commentId]);
+    emitToAll('comment:deleted', {
+      commentId,
+      videoId: deletedComment.video_id,
+      houseId: deletedComment.house_id,
+      parentId: deletedComment.parent_id,
+    });
     res.json({ message: 'Comment imefutwa kikamilifu' });
   } catch (err) {
     console.error('❌ deleteComment error:', err);
@@ -289,7 +307,7 @@ exports.toggleCommentLike = async (req, res, next) => {
 
   try {
     const commentCheck = await pool.query(
-      'SELECT id FROM video_comments WHERE id = $1',
+      'SELECT id, video_id, house_id FROM video_comments WHERE id = $1',
       [commentId]
     );
     if (commentCheck.rows.length === 0) {
@@ -316,10 +334,17 @@ exports.toggleCommentLike = async (req, res, next) => {
         [commentId]
       );
       
-      res.json({ 
+      const response = { 
         liked: false, 
         likes_count: parseInt(countResult.rows[0].likes_count) 
+      };
+      emitToAll('comment:liked', {
+        commentId,
+        videoId: commentCheck.rows[0].video_id,
+        houseId: commentCheck.rows[0].house_id,
+        ...response,
       });
+      res.json(response);
     } else {
       await pool.query(
         'INSERT INTO comment_likes (comment_id, user_id) VALUES ($1, $2)',
@@ -335,10 +360,17 @@ exports.toggleCommentLike = async (req, res, next) => {
         [commentId]
       );
       
-      res.json({ 
+      const response = { 
         liked: true, 
         likes_count: parseInt(countResult.rows[0].likes_count) 
+      };
+      emitToAll('comment:liked', {
+        commentId,
+        videoId: commentCheck.rows[0].video_id,
+        houseId: commentCheck.rows[0].house_id,
+        ...response,
       });
+      res.json(response);
     }
   } catch (err) {
     console.error('❌ toggleCommentLike error:', err);
@@ -396,10 +428,16 @@ exports.toggleVideoLike = async (req, res, next) => {
         [actualVideoId]
       );
       
-      res.json({ 
+      const response = { 
         liked: false, 
         likes_count: parseInt(countResult.rows[0].count) 
+      };
+      emitToAll('video:liked', {
+        videoId,
+        actualVideoId,
+        ...response,
       });
+      res.json(response);
     } else {
       await pool.query(
         'INSERT INTO video_likes (video_id, user_id) VALUES ($1, $2)',
@@ -411,10 +449,16 @@ exports.toggleVideoLike = async (req, res, next) => {
         [actualVideoId]
       );
       
-      res.json({ 
+      const response = { 
         liked: true, 
         likes_count: parseInt(countResult.rows[0].count) 
+      };
+      emitToAll('video:liked', {
+        videoId,
+        actualVideoId,
+        ...response,
       });
+      res.json(response);
     }
   } catch (err) {
     console.error('❌ toggleVideoLike error:', err);

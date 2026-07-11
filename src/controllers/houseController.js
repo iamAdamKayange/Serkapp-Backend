@@ -1,5 +1,7 @@
 const pool = require('../config/db');
 const { uploadMultiple, deleteFromSpaces, uploadToSpaces } = require('../services/imageUploadService');
+const { emitToAll, emitToLandlord } = require('../services/socketService');
+const { createHouseCreatedNotification } = require('../services/notificationService');
 
 // ========== 1. CREATE HOUSE ==========
 exports.createHouse = async (req, res, next) => {
@@ -93,6 +95,24 @@ exports.createHouse = async (req, res, next) => {
     }
 
     await client.query('COMMIT');
+    emitToAll('house:created', { houseId, landlordId });
+    emitToLandlord(landlordId, 'landlord:house_changed', {
+      action: 'created',
+      houseId,
+      landlordId,
+    });
+    createHouseCreatedNotification({
+      houseId,
+      landlordId,
+      houseName: firstName || name,
+      location: locationAddress,
+      rentPrice,
+      region,
+      district,
+      houseType: type,
+    }).catch((error) => {
+      console.error('Create house notification error:', error);
+    });
     res.status(201).json({ message: 'Nyumba imeundwa kikamilifu!', houseId });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -157,7 +177,12 @@ exports.getAllHouses = async (req, res, next) => {
           '[]'
         ) AS images,
         COALESCE(
-          json_agg(DISTINCT hv.video_url) FILTER (WHERE hv.video_url IS NOT NULL),
+          json_agg(DISTINCT jsonb_build_object(
+            'id', hv.id,
+            'url', hv.video_url,
+            'likes_count', COALESCE(vl.likes_count, 0),
+            'comments_count', COALESCE(vc.comments_count, 0)
+          )) FILTER (WHERE hv.video_url IS NOT NULL),
           '[]'
         ) AS videos,
         COALESCE(
@@ -200,12 +225,30 @@ exports.getVideoFeed = async (req, res, next) => {
           '[]'
         ) AS videos,
         COALESCE(
+          json_agg(DISTINCT jsonb_build_object(
+            'url', hv.video_url,
+            'likes_count', COALESCE(vl.likes_count, 0),
+            'comments_count', COALESCE(vc.comments_count, 0)
+          )) FILTER (WHERE hv.video_url IS NOT NULL),
+          '[]'
+        ) AS video_stats,
+        COALESCE(
           json_agg(DISTINCT hvt.thumbnail_url) FILTER (WHERE hvt.thumbnail_url IS NOT NULL),
           '[]'
         ) AS video_thumbnails
       FROM houses h
       LEFT JOIN house_videos hv ON hv.house_id = h.id
       LEFT JOIN house_video_thumbnails hvt ON hvt.house_id = h.id
+      LEFT JOIN (
+        SELECT video_id, COUNT(*)::int AS likes_count
+        FROM video_likes
+        GROUP BY video_id
+      ) vl ON vl.video_id = hv.id
+      LEFT JOIN (
+        SELECT video_id, COUNT(*)::int AS comments_count
+        FROM video_comments
+        GROUP BY video_id
+      ) vc ON vc.video_id = hv.id
       WHERE h.status = 'Inapatikana'
       GROUP BY h.id
       ORDER BY h.created_at DESC
@@ -373,6 +416,12 @@ exports.updateHouse = async (req, res, next) => {
     values.push(id);
     const query = `UPDATE houses SET ${setClauses.join(', ')} WHERE id = $${idx} RETURNING id`;
     const result = await pool.query(query, values);
+    emitToAll('house:updated', { houseId: result.rows[0].id, landlordId });
+    emitToLandlord(landlordId, 'landlord:house_changed', {
+      action: 'updated',
+      houseId: result.rows[0].id,
+      landlordId,
+    });
     res.json({ message: 'Nyumba imebadilishwa', houseId: result.rows[0].id });
   } catch (err) { 
     console.error('updateHouse error:', err);
@@ -404,6 +453,12 @@ exports.deleteHouse = async (req, res, next) => {
 
     await client.query(`DELETE FROM houses WHERE id = $1`, [id]);
     await client.query('COMMIT');
+    emitToAll('house:deleted', { houseId: id, landlordId });
+    emitToLandlord(landlordId, 'landlord:house_changed', {
+      action: 'deleted',
+      houseId: id,
+      landlordId,
+    });
     res.json({ message: 'Nyumba imefutwa pamoja na faili zake zote DigitalOcean Spaces.' });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -428,6 +483,13 @@ exports.addHouseImage = async (req, res, next) => {
       `INSERT INTO house_images (house_id, image_url, display_order) VALUES ($1, $2, $3) RETURNING *`,
       [id, imageUrl, newOrder]
     );
+    emitToAll('house:media_updated', { houseId: id, mediaType: 'image', action: 'added', landlordId });
+    emitToLandlord(landlordId, 'landlord:house_changed', {
+      action: 'media_updated',
+      houseId: id,
+      mediaType: 'image',
+      landlordId,
+    });
     res.status(201).json({ message: 'Picha imeongezwa', image: result.rows[0] });
   } catch (err) { 
     console.error('addHouseImage error:', err);
@@ -455,6 +517,14 @@ exports.addHouseVideo = async (req, res, next) => {
         [id, thumbnailUrl, newOrder]
       );
     }
+    emitToAll('house:media_updated', { houseId: id, mediaType: 'video', action: 'added', landlordId });
+    emitToAll('video:feed_updated', { houseId: id, action: 'added' });
+    emitToLandlord(landlordId, 'landlord:house_changed', {
+      action: 'media_updated',
+      houseId: id,
+      mediaType: 'video',
+      landlordId,
+    });
     res.status(201).json({ message: 'Video imeongezwa', video: result.rows[0] });
   } catch (err) { 
     console.error('addHouseVideo error:', err);
@@ -474,6 +544,13 @@ exports.deleteHouseImage = async (req, res, next) => {
     if (ownerCheck.rows.length === 0) return res.status(403).json({ error: 'Huna ruhusa' });
     await deleteFromSpaces(image.rows[0].image_url);
     await pool.query(`DELETE FROM house_images WHERE id = $1`, [imageId]);
+    emitToAll('house:media_updated', { houseId, mediaType: 'image', action: 'deleted', landlordId });
+    emitToLandlord(landlordId, 'landlord:house_changed', {
+      action: 'media_updated',
+      houseId,
+      mediaType: 'image',
+      landlordId,
+    });
     res.json({ message: 'Picha imefutwa kwenye database na DigitalOcean Spaces.' });
   } catch (err) { 
     console.error('deleteHouseImage error:', err);
@@ -494,6 +571,14 @@ exports.deleteHouseVideo = async (req, res, next) => {
     await deleteFromSpaces(video.rows[0].video_url);
     await pool.query(`DELETE FROM house_video_thumbnails WHERE house_id = $1 AND display_order = (SELECT display_order FROM house_videos WHERE id = $2)`, [houseId, videoId]);
     await pool.query(`DELETE FROM house_videos WHERE id = $1`, [videoId]);
+    emitToAll('house:media_updated', { houseId, mediaType: 'video', action: 'deleted', landlordId });
+    emitToAll('video:feed_updated', { houseId, videoId, action: 'deleted' });
+    emitToLandlord(landlordId, 'landlord:house_changed', {
+      action: 'media_updated',
+      houseId,
+      mediaType: 'video',
+      landlordId,
+    });
     res.json({ message: 'Video imefutwa kwenye database na DigitalOcean Spaces.' });
   } catch (err) { 
     console.error('deleteHouseVideo error:', err);
