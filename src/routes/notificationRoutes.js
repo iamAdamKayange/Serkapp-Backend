@@ -1,4 +1,5 @@
 const express = require('express');
+const { authMiddleware } = require('../middleware/auth');
 const {
   getAlertPreference,
   getNotifications,
@@ -12,8 +13,8 @@ const {
 const router = express.Router();
 
 router.get('/', getNotifications);
-router.get('/preferences', getAlertPreference);
-router.put('/preferences', saveAlertPreference);
+router.get('/preferences', authMiddleware, getAlertPreference);
+router.put('/preferences', authMiddleware, saveAlertPreference);
 router.post('/devices', registerDeviceToken);
 router.get('/saved-houses/:houseId', getSavedHouseStatus);
 router.post('/saved-houses', saveHouse);

@@ -7,6 +7,20 @@ const {
   saveDeviceToken,
   saveHouse,
 } = require('../services/notificationService');
+const jwt = require('jsonwebtoken');
+
+const optionalUserId = (req) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) return null;
+
+  try {
+    const token = authHeader.slice('Bearer '.length).trim();
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    return decoded.id || null;
+  } catch (_) {
+    return null;
+  }
+};
 
 exports.getNotifications = async (req, res, next) => {
   try {
@@ -27,6 +41,11 @@ exports.getAlertPreference = async (req, res, next) => {
       return res.status(400).json({ error: 'FCM token inahitajika.' });
     }
 
+    await saveDeviceToken({
+      token,
+      platform: req.query.platform,
+      userId: req.user.id,
+    });
     const preference = await getAlertPreference({ token });
     res.json(preference);
   } catch (error) {
@@ -50,6 +69,12 @@ exports.saveAlertPreference = async (req, res, next) => {
       return res.status(400).json({ error: 'FCM token inahitajika.' });
     }
 
+    await saveDeviceToken({
+      token,
+      platform: req.body.platform,
+      appVersion: req.body.appVersion,
+      userId: req.user.id,
+    });
     const preference = await saveAlertPreference({
       token,
       enabled,
@@ -71,12 +96,17 @@ exports.saveAlertPreference = async (req, res, next) => {
 
 exports.registerDeviceToken = async (req, res, next) => {
   try {
-    const { token, platform, appVersion, userId } = req.body;
+    const { token, platform, appVersion } = req.body;
     if (!token || typeof token !== 'string') {
       return res.status(400).json({ error: 'FCM token inahitajika.' });
     }
 
-    const saved = await saveDeviceToken({ token, platform, appVersion, userId });
+    const saved = await saveDeviceToken({
+      token,
+      platform,
+      appVersion,
+      userId: optionalUserId(req),
+    });
     res.status(201).json({ message: 'Device token imehifadhiwa.', id: saved.id });
   } catch (error) {
     next(error);

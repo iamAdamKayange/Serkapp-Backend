@@ -249,6 +249,7 @@ const findMatchingAlertTokens = async ({
       INNER JOIN app_alert_preferences pref
         ON pref.fcm_token = dt.fcm_token
       WHERE pref.enabled = TRUE
+        AND dt.user_id IS NOT NULL
         AND (
           cardinality(pref.regions) = 0
           OR EXISTS (

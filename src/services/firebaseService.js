@@ -1,4 +1,10 @@
-const admin = require('firebase-admin');
+const {
+  applicationDefault,
+  cert,
+  getApps,
+  initializeApp,
+} = require('firebase-admin/app');
+const { getMessaging } = require('firebase-admin/messaging');
 
 let initialized = false;
 
@@ -15,7 +21,7 @@ const parseServiceAccount = () => {
 };
 
 const initFirebaseAdmin = () => {
-  if (initialized || admin.apps.length > 0) {
+  if (initialized || getApps().length > 0) {
     initialized = true;
     return true;
   }
@@ -23,12 +29,12 @@ const initFirebaseAdmin = () => {
   try {
     const serviceAccount = parseServiceAccount();
     if (serviceAccount) {
-      admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount),
+      initializeApp({
+        credential: cert(serviceAccount),
       });
     } else {
-      admin.initializeApp({
-        credential: admin.credential.applicationDefault(),
+      initializeApp({
+        credential: applicationDefault(),
       });
     }
     initialized = true;
@@ -53,7 +59,7 @@ const sendToTopic = async ({ topic, title, body, data = {} }) => {
     return acc;
   }, {});
 
-  const response = await admin.messaging().send({
+  const response = await getMessaging().send({
     topic,
     notification: { title, body },
     data: stringData,
@@ -100,7 +106,7 @@ const sendToTokens = async ({ tokens, title, body, data = {} }) => {
   const invalidTokens = [];
 
   for (const chunk of chunks) {
-    const response = await admin.messaging().sendEachForMulticast({
+    const response = await getMessaging().sendEachForMulticast({
       tokens: chunk,
       notification: { title, body },
       data: stringData,
