@@ -1,6 +1,7 @@
 const express = require('express');
 const { authMiddleware } = require('../middleware/auth');
 const {
+  deleteNotification,
   getAlertPreference,
   getNotifications,
   getSavedHouseStatus,
@@ -19,5 +20,6 @@ router.post('/devices', registerDeviceToken);
 router.get('/saved-houses/:houseId', getSavedHouseStatus);
 router.post('/saved-houses', saveHouse);
 router.delete('/saved-houses/:houseId', removeSavedHouse);
+router.delete('/:notificationId', deleteNotification);
 
 module.exports = router;

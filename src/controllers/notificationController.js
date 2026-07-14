@@ -1,4 +1,5 @@
 const {
+  dismissNotification,
   getAlertPreference,
   isHouseSaved,
   listNotifications,
@@ -27,8 +28,27 @@ exports.getNotifications = async (req, res, next) => {
     const notifications = await listNotifications({
       limit: req.query.limit,
       before: req.query.before,
+      token: req.query.token,
     });
     res.json(notifications);
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.deleteNotification = async (req, res, next) => {
+  try {
+    const { token } = req.query;
+    const { notificationId } = req.params;
+    if (!token || typeof token !== 'string') {
+      return res.status(400).json({ error: 'FCM token inahitajika.' });
+    }
+    if (!notificationId || !Number.isFinite(Number(notificationId))) {
+      return res.status(400).json({ error: 'Notification id si sahihi.' });
+    }
+
+    await dismissNotification({ token, notificationId: Number(notificationId) });
+    res.json({ message: 'Notification imefutwa kwenye kifaa hiki.' });
   } catch (error) {
     next(error);
   }

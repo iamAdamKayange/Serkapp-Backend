@@ -68,6 +68,16 @@ const ensureNotificationTables = async () => {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS app_notification_dismissals (
+      id BIGSERIAL PRIMARY KEY,
+      fcm_token TEXT NOT NULL REFERENCES app_device_tokens(fcm_token) ON DELETE CASCADE,
+      notification_id BIGINT NOT NULL REFERENCES app_notifications(id) ON DELETE CASCADE,
+      dismissed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (fcm_token, notification_id)
+    )
+  `);
+
+  await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_app_notifications_created_at
     ON app_notifications (created_at DESC)
   `);
@@ -111,6 +121,11 @@ const ensureNotificationTables = async () => {
     CREATE INDEX IF NOT EXISTS idx_app_saved_houses_token
     ON app_saved_houses (fcm_token, created_at DESC)
   `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_app_notification_dismissals_token
+    ON app_notification_dismissals (fcm_token, dismissed_at DESC)
+  `);
 };
 
 const saveDeviceToken = async ({ token, platform, appVersion, userId }) => {
@@ -133,14 +148,28 @@ const saveDeviceToken = async ({ token, platform, appVersion, userId }) => {
   return result.rows[0];
 };
 
-const listNotifications = async ({ limit = 50, before } = {}) => {
+const listNotifications = async ({ limit = 50, before, token } = {}) => {
   const values = [Math.min(Math.max(Number(limit) || 50, 1), 100)];
-  let where = '';
+  const conditions = [];
 
   if (before) {
     values.push(before);
-    where = `WHERE created_at < $${values.length}`;
+    conditions.push(`created_at < $${values.length}`);
   }
+
+  if (token) {
+    values.push(token);
+    conditions.push(`
+      NOT EXISTS (
+        SELECT 1
+        FROM app_notification_dismissals dismissed
+        WHERE dismissed.notification_id = app_notifications.id
+          AND dismissed.fcm_token = $${values.length}
+      )
+    `);
+  }
+
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
   const result = await pool.query(
     `
@@ -154,6 +183,18 @@ const listNotifications = async ({ limit = 50, before } = {}) => {
   );
 
   return result.rows;
+};
+
+const dismissNotification = async ({ token, notificationId }) => {
+  await pool.query(
+    `
+      INSERT INTO app_notification_dismissals (fcm_token, notification_id)
+      VALUES ($1, $2)
+      ON CONFLICT (fcm_token, notification_id)
+      DO UPDATE SET dismissed_at = NOW()
+    `,
+    [token, notificationId],
+  );
 };
 
 const getAlertPreference = async ({ token }) => {
@@ -416,6 +457,7 @@ module.exports = {
   ensureNotificationTables,
   saveDeviceToken,
   listNotifications,
+  dismissNotification,
   getAlertPreference,
   saveAlertPreference,
   isHouseSaved,
