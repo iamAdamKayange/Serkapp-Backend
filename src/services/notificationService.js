@@ -280,6 +280,28 @@ const findMatchingAlertTokens = async ({
   return result.rows.map((row) => row.fcm_token);
 };
 
+const findAllDeviceTokens = async ({ excludeTokens = [] } = {}) => {
+  const result = await pool.query(
+    `
+      SELECT DISTINCT fcm_token
+      FROM app_device_tokens
+      WHERE last_seen_at > NOW() - INTERVAL '120 days'
+        AND NOT (fcm_token = ANY($1::text[]))
+    `,
+    [excludeTokens],
+  );
+
+  return result.rows.map((row) => row.fcm_token);
+};
+
+const deleteInvalidTokens = async (invalidTokens = []) => {
+  if (!Array.isArray(invalidTokens) || invalidTokens.length === 0) return;
+  await pool.query(
+    `DELETE FROM app_device_tokens WHERE fcm_token = ANY($1::text[])`,
+    [invalidTokens],
+  );
+};
+
 const isHouseSaved = async ({ token, houseId }) => {
   const result = await pool.query(
     `
@@ -356,26 +378,34 @@ const createHouseCreatedNotification = async ({
   );
 
   try {
-    const tokens = await findMatchingAlertTokens({
+    const matchingTokens = await findMatchingAlertTokens({
       region,
       district,
       houseType,
       rentPrice,
     });
-    const delivery = await sendToTokens({
-      tokens,
+
+    const smartTitle = 'Nyumba inayofanana na filter zako';
+    const smartDelivery = await sendToTokens({
+      tokens: matchingTokens,
+      title: smartTitle,
+      body,
+      data,
+    });
+    await deleteInvalidTokens(smartDelivery.invalidTokens);
+
+    const generalTokens = await findAllDeviceTokens({
+      excludeTokens: matchingTokens,
+    });
+    const generalDelivery = await sendToTokens({
+      tokens: generalTokens,
       title,
       body,
       data,
     });
-    if (delivery.invalidTokens?.length > 0) {
-      await pool.query(
-        `DELETE FROM app_device_tokens WHERE fcm_token = ANY($1::text[])`,
-        [delivery.invalidTokens],
-      );
-    }
+    await deleteInvalidTokens(generalDelivery.invalidTokens);
   } catch (error) {
-    console.error('Failed to send smart house FCM notification:', error);
+    console.error('Failed to send house FCM notification:', error);
   }
 
   return result.rows[0];
