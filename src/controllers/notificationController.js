@@ -29,6 +29,7 @@ exports.getNotifications = async (req, res, next) => {
       limit: req.query.limit,
       before: req.query.before,
       token: req.query.token,
+      installCutoffAt: req.query.installCutoffAt,
     });
     res.json(notifications);
   } catch (error) {
@@ -116,7 +117,7 @@ exports.saveAlertPreference = async (req, res, next) => {
 
 exports.registerDeviceToken = async (req, res, next) => {
   try {
-    const { token, platform, appVersion } = req.body;
+    const { token, platform, appVersion, installCutoffAt } = req.body;
     if (!token || typeof token !== 'string') {
       return res.status(400).json({ error: 'FCM token inahitajika.' });
     }
@@ -125,6 +126,7 @@ exports.registerDeviceToken = async (req, res, next) => {
       token,
       platform,
       appVersion,
+      installCutoffAt,
       userId: optionalUserId(req),
     });
     res.status(201).json({ message: 'Device token imehifadhiwa.', id: saved.id });

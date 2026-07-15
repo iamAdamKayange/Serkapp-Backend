@@ -17,6 +17,12 @@ const normalizeMoney = (value) => {
   return Number.isFinite(number) && number >= 0 ? number : null;
 };
 
+const normalizeDate = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+};
+
 const ensureNotificationTables = async () => {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS app_device_tokens (
@@ -25,10 +31,16 @@ const ensureNotificationTables = async () => {
       platform VARCHAR(32),
       app_version VARCHAR(64),
       user_id TEXT,
+      install_cutoff_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `);
+
+  await pool.query(`
+    ALTER TABLE app_device_tokens
+    ADD COLUMN IF NOT EXISTS install_cutoff_at TIMESTAMPTZ
   `);
 
   await pool.query(`
@@ -128,38 +140,81 @@ const ensureNotificationTables = async () => {
   `);
 };
 
-const saveDeviceToken = async ({ token, platform, appVersion, userId }) => {
+const saveDeviceToken = async ({
+  token,
+  platform,
+  appVersion,
+  userId,
+  installCutoffAt,
+}) => {
   const result = await pool.query(
     `
-      INSERT INTO app_device_tokens (fcm_token, platform, app_version, user_id)
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO app_device_tokens (
+        fcm_token,
+        platform,
+        app_version,
+        user_id,
+        install_cutoff_at
+      )
+      VALUES ($1, $2, $3, $4, $5)
       ON CONFLICT (fcm_token)
       DO UPDATE SET
         platform = EXCLUDED.platform,
         app_version = EXCLUDED.app_version,
         user_id = COALESCE(EXCLUDED.user_id, app_device_tokens.user_id),
+        install_cutoff_at = COALESCE(
+          EXCLUDED.install_cutoff_at,
+          app_device_tokens.install_cutoff_at
+        ),
         updated_at = NOW(),
         last_seen_at = NOW()
       RETURNING id
     `,
-    [token, platform, appVersion, userId],
+    [token, platform, appVersion, userId, normalizeDate(installCutoffAt)],
   );
 
   return result.rows[0];
 };
 
-const listNotifications = async ({ limit = 50, before, token } = {}) => {
+const listNotifications = async ({
+  limit = 50,
+  before,
+  token,
+  installCutoffAt,
+} = {}) => {
   const values = [Math.min(Math.max(Number(limit) || 50, 1), 100)];
   const conditions = [];
+  const normalizedInstallCutoffAt = normalizeDate(installCutoffAt);
 
   if (before) {
     values.push(before);
-    conditions.push(`created_at < $${values.length}`);
+    conditions.push(`app_notifications.created_at < $${values.length}`);
+  }
+
+  if (normalizedInstallCutoffAt) {
+    values.push(normalizedInstallCutoffAt);
+    conditions.push(`app_notifications.created_at >= $${values.length}::timestamptz`);
   }
 
   if (token) {
     values.push(token);
     conditions.push(`
+      app_notifications.created_at >= COALESCE(
+        (
+          SELECT dt.install_cutoff_at
+          FROM app_device_tokens dt
+          WHERE dt.fcm_token = $${values.length}
+          LIMIT 1
+        ),
+        (
+          SELECT dt.created_at
+          FROM app_device_tokens dt
+          WHERE dt.fcm_token = $${values.length}
+          LIMIT 1
+        ),
+        '-infinity'::timestamptz
+      )
+      AND
       NOT EXISTS (
         SELECT 1
         FROM app_notification_dismissals dismissed
