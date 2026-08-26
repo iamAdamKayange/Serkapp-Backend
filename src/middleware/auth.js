@@ -10,11 +10,27 @@ const authMiddleware = (req, res, next) => {
   const token = authHeader.split(' ')[1];
 
   try {
-    req.user = jwt.verify(token, process.env.JWT_SECRET);
+    // Verify token with expiration check
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, {
+      expiresIn: process.env.JWT_EXPIRES_IN || '7d'
+    });
+    
+    // Add additional security checks
+    if (!decoded.id || !decoded.email) {
+      return res.status(401).json({ error: 'Invalid token structure' });
+    }
+    
+    req.user = decoded;
     next();
   } catch (err) {
     console.warn('Token verification failed:', err.message);
-    return res.status(401).json({ error: 'Invalid or expired token' });
+    if (err.name === 'TokenExpiredError') {
+      return res.status(401).json({ error: 'Token expired' });
+    }
+    if (err.name === 'JsonWebTokenError') {
+      return res.status(401).json({ error: 'Invalid token' });
+    }
+    return res.status(401).json({ error: 'Authentication failed' });
   }
 };
 
@@ -32,4 +48,11 @@ const adminOnly = (req, res, next) => {
   next();
 };
 
-module.exports = { authMiddleware, landlordOnly, adminOnly };
+const tenantOnly = (req, res, next) => {
+  if (req.user?.role !== 'normal' && req.user?.role !== 'tenant') {
+    return res.status(403).json({ error: 'Access denied: Tenant only' });
+  }
+  next();
+};
+
+module.exports = { authMiddleware, landlordOnly, adminOnly, tenantOnly };

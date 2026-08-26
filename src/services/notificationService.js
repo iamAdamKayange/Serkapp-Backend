@@ -138,6 +138,83 @@ const ensureNotificationTables = async () => {
     CREATE INDEX IF NOT EXISTS idx_app_notification_dismissals_token
     ON app_notification_dismissals (fcm_token, dismissed_at DESC)
   `);
+
+  // ==================== VIDEO LIKE & COMMENT TABLES ====================
+  
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS video_comments (
+      id BIGSERIAL PRIMARY KEY,
+      video_id TEXT NOT NULL,
+      house_id TEXT,
+      user_id TEXT NOT NULL,
+      content TEXT NOT NULL,
+      parent_id BIGINT,
+      likes_count INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS video_likes (
+      id BIGSERIAL PRIMARY KEY,
+      video_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (video_id, user_id)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS comment_likes (
+      id BIGSERIAL PRIMARY KEY,
+      comment_id BIGINT NOT NULL,
+      user_id TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (comment_id, user_id)
+    )
+  `);
+
+  // Indexes for video like and comment tables
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_video_comments_video_id
+    ON video_comments (video_id)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_video_comments_house_id
+    ON video_comments (house_id)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_video_comments_user_id
+    ON video_comments (user_id)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_video_comments_parent_id
+    ON video_comments (parent_id)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_video_likes_video_user
+    ON video_likes (video_id, user_id)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_video_likes_user_id
+    ON video_likes (user_id)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_comment_likes_comment_user
+    ON comment_likes (comment_id, user_id)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_comment_likes_user_id
+    ON comment_likes (user_id)
+  `);
 };
 
 const saveDeviceToken = async ({

@@ -20,6 +20,6 @@ router.post('/devices', registerDeviceToken);
 router.get('/saved-houses/:houseId', getSavedHouseStatus);
 router.post('/saved-houses', saveHouse);
 router.delete('/saved-houses/:houseId', removeSavedHouse);
-router.delete('/:notificationId', deleteNotification);
+router.delete('/:notificationId', authMiddleware, deleteNotification);
 
 module.exports = router;
