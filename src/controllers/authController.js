@@ -14,14 +14,35 @@ exports.register = async (req, res, next) => {
     // Hash password
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
+    
+    // Validate role
+    const validRoles = ['normal', 'landlord', 'admin'];
+    const userRole = validRoles.includes(role) ? role : 'normal';
+    
     // Insert user
     const result = await pool.query(
       `INSERT INTO users (email, password_hash, first_name, last_name, phone, role)
        VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, email, first_name, last_name, role`,
-      [email, passwordHash, firstName, lastName, phone, role || 'normal']
+      [email, passwordHash, firstName, lastName, phone, userRole]
     );
     const user = result.rows[0];
     const token = generateToken(user);
+    
+    // If registering as landlord, create initial verification records
+    if (userRole === 'landlord') {
+      await pool.query(
+        `INSERT INTO landlord_identity_verification (user_id, full_name, status, created_at)
+         VALUES ($1, $2, 'pending', NOW())`,
+        [user.id, `${firstName} ${lastName}`]
+      );
+      
+      await pool.query(
+        `INSERT INTO landlord_property_verification (user_id, status, created_at)
+         VALUES ($1, 'pending', NOW())`,
+        [user.id]
+      );
+    }
+    
     res.status(201).json({
       message: 'User registered successfully',
       user: { id: user.id, email: user.email, firstName: user.first_name, lastName: user.last_name, role: user.role },

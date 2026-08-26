@@ -23,6 +23,30 @@ exports.createHouse = async (req, res, next) => {
     return res.status(400).json({ error: 'Jina maarufu, bei na anwani zinahitajika.' });
   }
 
+  // Check landlord verification status (only for landlord role)
+  if (req.user.role === 'landlord') {
+    const identityResult = await pool.query(
+      `SELECT status FROM landlord_identity_verification WHERE user_id = $1`,
+      [landlordId]
+    );
+    const propertyResult = await pool.query(
+      `SELECT status FROM landlord_property_verification WHERE user_id = $1`,
+      [landlordId]
+    );
+
+    const identityStatus = identityResult.rows.length > 0 ? identityResult.rows[0].status : 'not_submitted';
+    const propertyStatus = propertyResult.rows.length > 0 ? propertyResult.rows[0].status : 'not_submitted';
+
+    if (identityStatus !== 'verified' || propertyStatus !== 'verified') {
+      return res.status(403).json({ 
+        error: 'Lazima uwe verified kama mwenye nyumba kabla ya kuweka nyumba.',
+        identityStatus,
+        propertyStatus,
+        canPublish: identityStatus === 'verified' && propertyStatus === 'verified'
+      });
+    }
+  }
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');

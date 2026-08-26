@@ -51,8 +51,14 @@ const ensureNotificationTables = async () => {
       body TEXT NOT NULL,
       house_id TEXT,
       data JSONB NOT NULL DEFAULT '{}'::jsonb,
+      target_roles TEXT[] NOT NULL DEFAULT '{normal,landlord,admin}',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `);
+
+  await pool.query(`
+    ALTER TABLE app_notifications
+    ADD COLUMN IF NOT EXISTS target_roles TEXT[] NOT NULL DEFAULT '{normal,landlord,admin}'
   `);
 
   await pool.query(`
@@ -92,6 +98,11 @@ const ensureNotificationTables = async () => {
   await pool.query(`
     CREATE INDEX IF NOT EXISTS idx_app_notifications_created_at
     ON app_notifications (created_at DESC)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_app_notifications_target_roles
+    ON app_notifications USING GIN (target_roles)
   `);
 
   await pool.query(`
@@ -215,6 +226,68 @@ const ensureNotificationTables = async () => {
     CREATE INDEX IF NOT EXISTS idx_comment_likes_user_id
     ON comment_likes (user_id)
   `);
+
+  // ==================== LANDLORD VERIFICATION TABLES ====================
+  
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS landlord_identity_verification (
+      id BIGSERIAL PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      full_name TEXT NOT NULL,
+      nin_number TEXT,
+      id_photo_url TEXT,
+      selfie_photo_url TEXT,
+      status VARCHAR(20) NOT NULL DEFAULT 'pending',
+      admin_notes TEXT,
+      submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      reviewed_at TIMESTAMPTZ,
+      reviewed_by TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (user_id)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS landlord_property_verification (
+      id BIGSERIAL PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      property_document_url TEXT,
+      property_photos TEXT[] NOT NULL DEFAULT '{}',
+      latitude NUMERIC,
+      longitude NUMERIC,
+      address TEXT,
+      status VARCHAR(20) NOT NULL DEFAULT 'pending',
+      admin_notes TEXT,
+      submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      reviewed_at TIMESTAMPTZ,
+      reviewed_by TEXT REFERENCES users(id),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (user_id)
+    )
+  `);
+
+  // Indexes for landlord verification tables
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_landlord_identity_verification_user_id
+    ON landlord_identity_verification (user_id)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_landlord_identity_verification_status
+    ON landlord_identity_verification (status)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_landlord_property_verification_user_id
+    ON landlord_property_verification (user_id)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_landlord_property_verification_status
+    ON landlord_property_verification (status)
+  `);
 };
 
 const saveDeviceToken = async ({
@@ -258,6 +331,7 @@ const listNotifications = async ({
   before,
   token,
   installCutoffAt,
+  userRole,
 } = {}) => {
   const values = [Math.min(Math.max(Number(limit) || 50, 1), 100)];
   const conditions = [];
@@ -301,6 +375,18 @@ const listNotifications = async ({
     `);
   }
 
+  // Role-based filtering
+  if (userRole) {
+    values.push(userRole);
+    conditions.push(`
+      EXISTS (
+        SELECT 1 
+        FROM unnest(app_notifications.target_roles) AS role
+        WHERE role = $${values.length}
+      )
+    `);
+  }
+
   const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
   const result = await pool.query(
@@ -318,15 +404,19 @@ const listNotifications = async ({
 };
 
 const dismissNotification = async ({ token, notificationId }) => {
+  // Insert dismissal record to permanently remove notification for this user
   await pool.query(
     `
-      INSERT INTO app_notification_dismissals (fcm_token, notification_id)
-      VALUES ($1, $2)
+      INSERT INTO app_notification_dismissals (fcm_token, notification_id, dismissed_at)
+      VALUES ($1, $2, NOW())
       ON CONFLICT (fcm_token, notification_id)
       DO UPDATE SET dismissed_at = NOW()
     `,
     [token, notificationId],
   );
+  
+  // Optional: Also add user-specific tracking if user_id is available
+  // This would allow for better cleanup and management
 };
 
 const getAlertPreference = async ({ token }) => {
@@ -543,11 +633,11 @@ const createHouseCreatedNotification = async ({
 
   const result = await pool.query(
     `
-      INSERT INTO app_notifications (type, title, body, house_id, data)
-      VALUES ($1, $2, $3, $4, $5::jsonb)
+      INSERT INTO app_notifications (type, title, body, house_id, data, target_roles)
+      VALUES ($1, $2, $3, $4, $5::jsonb, $6::text[])
       RETURNING id, type, title, body, house_id, data, created_at
     `,
-    ['house_created', title, body, houseId, JSON.stringify(data)],
+    ['house_created', title, body, houseId, JSON.stringify(data), ['normal', 'landlord', 'admin']],
   );
 
   try {

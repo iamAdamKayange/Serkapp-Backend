@@ -25,11 +25,13 @@ const optionalUserId = (req) => {
 
 exports.getNotifications = async (req, res, next) => {
   try {
+    const userRole = req.user?.role || null;
     const notifications = await listNotifications({
       limit: req.query.limit,
       before: req.query.before,
       token: req.query.token,
       installCutoffAt: req.query.installCutoffAt,
+      userRole: userRole,
     });
     res.json(notifications);
   } catch (error) {
