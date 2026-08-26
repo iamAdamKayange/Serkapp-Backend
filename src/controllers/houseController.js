@@ -26,11 +26,11 @@ exports.createHouse = async (req, res, next) => {
   // Check landlord verification status (only for landlord role)
   if (req.user.role === 'landlord') {
     const identityResult = await pool.query(
-      `SELECT status FROM landlord_identity_verification WHERE user_id = $1`,
+      `SELECT status FROM landlord_identity_verification WHERE user_id = $1::uuid`,
       [landlordId]
     );
     const propertyResult = await pool.query(
-      `SELECT status FROM landlord_property_verification WHERE user_id = $1`,
+      `SELECT status FROM landlord_property_verification WHERE user_id = $1::uuid`,
       [landlordId]
     );
 

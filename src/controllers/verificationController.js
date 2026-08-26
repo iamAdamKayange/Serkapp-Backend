@@ -19,7 +19,7 @@ exports.submitIdentityVerification = async (req, res, next) => {
   try {
     // Check if user already has verification
     const existing = await pool.query(
-      'SELECT id, status FROM landlord_identity_verification WHERE user_id = $1',
+      'SELECT id, status FROM landlord_identity_verification WHERE user_id = $1::uuid',
       [userId]
     );
 
@@ -48,14 +48,14 @@ exports.submitIdentityVerification = async (req, res, next) => {
         `UPDATE landlord_identity_verification 
          SET full_name = $1, nin_number = $2, id_photo_url = $3, selfie_photo_url = $4, 
              status = 'pending', admin_notes = NULL, submitted_at = NOW(), reviewed_at = NULL, reviewed_by = NULL, updated_at = NOW()
-         WHERE user_id = $5`,
+         WHERE user_id = $5::uuid`,
         [fullName, ninNumber, idPhotoUrl, selfieUrl, userId]
       );
     } else {
       // Create new record
       await pool.query(
         `INSERT INTO landlord_identity_verification (user_id, full_name, nin_number, id_photo_url, selfie_photo_url, status, submitted_at)
-         VALUES ($1, $2, $3, $4, $5, 'pending', NOW())`,
+         VALUES ($1::uuid, $2, $3, $4, $5, 'pending', NOW())`,
         [userId, fullName, ninNumber, idPhotoUrl, selfieUrl]
       );
     }
@@ -74,7 +74,7 @@ exports.getIdentityVerificationStatus = async (req, res, next) => {
   try {
     const result = await pool.query(
       `SELECT id, full_name, nin_number, id_photo_url, selfie_photo_url, status, admin_notes, submitted_at, reviewed_at
-       FROM landlord_identity_verification WHERE user_id = $1`,
+       FROM landlord_identity_verification WHERE user_id = $1::uuid`,
       [userId]
     );
 
@@ -149,7 +149,7 @@ exports.submitPropertyVerification = async (req, res, next) => {
   try {
     // Check if user already has verification
     const existing = await pool.query(
-      'SELECT id, status FROM landlord_property_verification WHERE user_id = $1',
+      'SELECT id, status FROM landlord_property_verification WHERE user_id = $1::uuid',
       [userId]
     );
 
@@ -179,14 +179,14 @@ exports.submitPropertyVerification = async (req, res, next) => {
         `UPDATE landlord_property_verification 
          SET property_document_url = $1, property_photos = $2, latitude = $3, longitude = $4, address = $5,
              status = 'pending', admin_notes = NULL, submitted_at = NOW(), reviewed_at = NULL, reviewed_by = NULL, updated_at = NOW()
-         WHERE user_id = $6`,
+         WHERE user_id = $6::uuid`,
         [documentUrl, photoUrls, latitude, longitude, address, userId]
       );
     } else {
       // Create new record
       await pool.query(
         `INSERT INTO landlord_property_verification (user_id, property_document_url, property_photos, latitude, longitude, address, status, submitted_at)
-         VALUES ($1, $2, $3, $4, $5, $6, 'pending', NOW())`,
+         VALUES ($1::uuid, $2, $3, $4, $5, $6, 'pending', NOW())`,
         [userId, documentUrl, photoUrls, latitude, longitude, address]
       );
     }
@@ -205,7 +205,7 @@ exports.getPropertyVerificationStatus = async (req, res, next) => {
   try {
     const result = await pool.query(
       `SELECT id, property_document_url, property_photos, latitude, longitude, address, status, admin_notes, submitted_at, reviewed_at
-       FROM landlord_property_verification WHERE user_id = $1`,
+       FROM landlord_property_verification WHERE user_id = $1::uuid`,
       [userId]
     );
 
@@ -270,12 +270,12 @@ exports.getVerificationStatus = async (req, res, next) => {
 
   try {
     const identityResult = await pool.query(
-      `SELECT status FROM landlord_identity_verification WHERE user_id = $1`,
+      `SELECT status FROM landlord_identity_verification WHERE user_id = $1::uuid`,
       [userId]
     );
 
     const propertyResult = await pool.query(
-      `SELECT status FROM landlord_property_verification WHERE user_id = $1`,
+      `SELECT status FROM landlord_property_verification WHERE user_id = $1::uuid`,
       [userId]
     );
 

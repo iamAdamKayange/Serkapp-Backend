@@ -32,13 +32,13 @@ exports.register = async (req, res, next) => {
     if (userRole === 'landlord') {
       await pool.query(
         `INSERT INTO landlord_identity_verification (user_id, full_name, status, created_at)
-         VALUES ($1, $2, 'pending', NOW())`,
+         VALUES ($1::uuid, $2, 'pending', NOW())`,
         [user.id, `${firstName} ${lastName}`]
       );
       
       await pool.query(
         `INSERT INTO landlord_property_verification (user_id, status, created_at)
-         VALUES ($1, 'pending', NOW())`,
+         VALUES ($1::uuid, 'pending', NOW())`,
         [user.id]
       );
     }

@@ -232,7 +232,7 @@ const ensureNotificationTables = async () => {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS landlord_identity_verification (
       id BIGSERIAL PRIMARY KEY,
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       full_name TEXT NOT NULL,
       nin_number TEXT,
       id_photo_url TEXT,
@@ -241,7 +241,7 @@ const ensureNotificationTables = async () => {
       admin_notes TEXT,
       submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       reviewed_at TIMESTAMPTZ,
-      reviewed_by TEXT REFERENCES users(id),
+      reviewed_by UUID REFERENCES users(id),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (user_id)
@@ -251,7 +251,7 @@ const ensureNotificationTables = async () => {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS landlord_property_verification (
       id BIGSERIAL PRIMARY KEY,
-      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       property_document_url TEXT,
       property_photos TEXT[] NOT NULL DEFAULT '{}',
       latitude NUMERIC,
@@ -261,7 +261,7 @@ const ensureNotificationTables = async () => {
       admin_notes TEXT,
       submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       reviewed_at TIMESTAMPTZ,
-      reviewed_by TEXT REFERENCES users(id),
+      reviewed_by UUID REFERENCES users(id),
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (user_id)
