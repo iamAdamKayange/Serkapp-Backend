@@ -39,7 +39,7 @@ app.use(helmet({
 
 // CORS configuration
 app.use(cors({
-  origin: process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3000', 'https://serkapp.com'],
+  origin: process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3000', 'https://serkapp.com', 'https://serkapp-admin.vercel.app', 'https://serik-admin-six.vercel.app', 'https://*.vercel.app'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization']
