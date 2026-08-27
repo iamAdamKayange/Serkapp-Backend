@@ -237,15 +237,27 @@ const ensureNotificationTables = async () => {
       nin_number TEXT,
       id_photo_url TEXT,
       selfie_photo_url TEXT,
+      id_document_url TEXT,
       status VARCHAR(20) NOT NULL DEFAULT 'pending',
       admin_notes TEXT,
       submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       reviewed_at TIMESTAMPTZ,
       reviewed_by UUID REFERENCES users(id),
+      review_count INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (user_id)
     )
+  `);
+
+  await pool.query(`
+    ALTER TABLE landlord_identity_verification
+    ADD COLUMN IF NOT EXISTS id_document_url TEXT
+  `);
+
+  await pool.query(`
+    ALTER TABLE landlord_identity_verification
+    ADD COLUMN IF NOT EXISTS review_count INTEGER NOT NULL DEFAULT 0
   `);
 
   await pool.query(`
@@ -262,10 +274,16 @@ const ensureNotificationTables = async () => {
       submitted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       reviewed_at TIMESTAMPTZ,
       reviewed_by UUID REFERENCES users(id),
+      review_count INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (user_id)
     )
+  `);
+
+  await pool.query(`
+    ALTER TABLE landlord_property_verification
+    ADD COLUMN IF NOT EXISTS review_count INTEGER NOT NULL DEFAULT 0
   `);
 
   // Indexes for landlord verification tables

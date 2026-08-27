@@ -20,19 +20,44 @@ exports.submitIdentityVerification = async (req, res, next) => {
   try {
     // Check if user already has verification
     const existing = await pool.query(
-      'SELECT id, status FROM landlord_identity_verification WHERE user_id = $1::uuid',
+      'SELECT id, status, submitted_at, review_count FROM landlord_identity_verification WHERE user_id = $1::uuid ORDER BY submitted_at DESC LIMIT 1',
       [userId]
     );
 
     if (existing.rows.length > 0) {
       const existingStatus = existing.rows[0].status;
+      const reviewCount = existing.rows[0].review_count || 0;
+      const submittedAt = new Date(existing.rows[0].submitted_at);
+      const now = new Date();
+      const daysSinceSubmission = (now - submittedAt) / (1000 * 60 * 60 * 24);
+
       if (existingStatus === 'verified') {
         return res.status(400).json({ error: 'Identity already verified' });
       }
+      
       if (existingStatus === 'pending') {
-        return res.status(400).json({ error: 'Verification already pending review' });
+        return res.status(400).json({ 
+          error: 'Verification already pending review',
+          status: 'pending',
+          submittedAt: existing.rows[0].submitted_at
+        });
       }
-      // If rejected, allow resubmission
+
+      // If rejected, check if they can resubmit (limit to 3 attempts per month)
+      if (existingStatus === 'rejected') {
+        if (reviewCount >= 3 && daysSinceSubmission < 30) {
+          return res.status(429).json({ 
+            error: 'Too many verification attempts. Please wait 30 days before trying again.',
+            retryAfter: Math.ceil(30 - daysSinceSubmission)
+          });
+        }
+        if (daysSinceSubmission < 7) {
+          return res.status(429).json({ 
+            error: 'Please wait 7 days before resubmitting verification',
+            retryAfter: Math.ceil(7 - daysSinceSubmission)
+          });
+        }
+      }
     }
 
     // Convert buffer to base64 for upload
@@ -56,15 +81,15 @@ exports.submitIdentityVerification = async (req, res, next) => {
         `UPDATE landlord_identity_verification 
          SET full_name = $1, nin_number = $2, id_photo_url = $3, selfie_photo_url = $4, 
              id_document_url = $5, status = 'pending', admin_notes = NULL, submitted_at = NOW(), 
-             reviewed_at = NULL, reviewed_by = NULL, updated_at = NOW()
+             reviewed_at = NULL, reviewed_by = NULL, updated_at = NOW(), review_count = COALESCE(review_count, 0) + 1
          WHERE user_id = $6::uuid`,
         [fullName, ninNumber, idPhotoUrl, selfieUrl, idDocumentUrl, userId]
       );
     } else {
       // Create new record
       await pool.query(
-        `INSERT INTO landlord_identity_verification (user_id, full_name, nin_number, id_photo_url, selfie_photo_url, id_document_url, status, submitted_at)
-         VALUES ($1::uuid, $2, $3, $4, $5, $6, 'pending', NOW())`,
+        `INSERT INTO landlord_identity_verification (user_id, full_name, nin_number, id_photo_url, selfie_photo_url, id_document_url, status, submitted_at, review_count)
+         VALUES ($1::uuid, $2, $3, $4, $5, $6, 'pending', NOW(), 1)`,
         [userId, fullName, ninNumber, idPhotoUrl, selfieUrl, idDocumentUrl]
       );
     }
@@ -82,8 +107,8 @@ exports.getIdentityVerificationStatus = async (req, res, next) => {
 
   try {
     const result = await pool.query(
-      `SELECT id, full_name, nin_number, id_photo_url, selfie_photo_url, status, admin_notes, submitted_at, reviewed_at
-       FROM landlord_identity_verification WHERE user_id = $1::uuid`,
+      `SELECT id, full_name, nin_number, id_photo_url, selfie_photo_url, id_document_url, status, admin_notes, submitted_at, reviewed_at, review_count
+       FROM landlord_identity_verification WHERE user_id = $1::uuid ORDER BY submitted_at DESC LIMIT 1`,
       [userId]
     );
 
@@ -91,7 +116,36 @@ exports.getIdentityVerificationStatus = async (req, res, next) => {
       return res.json({ status: 'not_submitted' });
     }
 
-    res.json(result.rows[0]);
+    const verification = result.rows[0];
+    const now = new Date();
+    const submittedAt = new Date(verification.submitted_at);
+    const daysSinceSubmission = (now - submittedAt) / (1000 * 60 * 60 * 24);
+    
+    // Calculate retry information
+    let canResubmit = false;
+    let retryAfter = 0;
+    let retryReason = '';
+
+    if (verification.status === 'rejected') {
+      const reviewCount = verification.review_count || 0;
+      if (reviewCount >= 3 && daysSinceSubmission < 30) {
+        retryAfter = Math.ceil(30 - daysSinceSubmission);
+        retryReason = 'Too many attempts';
+      } else if (daysSinceSubmission < 7) {
+        retryAfter = Math.ceil(7 - daysSinceSubmission);
+        retryReason = 'Wait period';
+      } else {
+        canResubmit = true;
+      }
+    }
+
+    res.json({
+      ...verification,
+      canResubmit,
+      retryAfter,
+      retryReason,
+      daysSinceSubmission: Math.floor(daysSinceSubmission),
+    });
   } catch (err) {
     next(err);
   }
@@ -126,12 +180,23 @@ exports.reviewIdentityVerification = async (req, res, next) => {
   }
 
   try {
-    await pool.query(
-      `UPDATE landlord_identity_verification 
-       SET status = $1, admin_notes = $2, reviewed_at = NOW(), reviewed_by = $3, updated_at = NOW()
-       WHERE id = $4`,
-      [status, adminNotes || null, adminId, verificationId]
-    );
+    // When rejecting, increment the review count
+    if (status === 'rejected') {
+      await pool.query(
+        `UPDATE landlord_identity_verification 
+         SET status = $1, admin_notes = $2, reviewed_at = NOW(), reviewed_by = $3, 
+             review_count = COALESCE(review_count, 0) + 1, updated_at = NOW()
+         WHERE id = $4`,
+        [status, adminNotes || null, adminId, verificationId]
+      );
+    } else {
+      await pool.query(
+        `UPDATE landlord_identity_verification 
+         SET status = $1, admin_notes = $2, reviewed_at = NOW(), reviewed_by = $3, updated_at = NOW()
+         WHERE id = $4`,
+        [status, adminNotes || null, adminId, verificationId]
+      );
+    }
 
     res.json({ message: `Identity verification ${status} successfully` });
   } catch (err) {
@@ -212,8 +277,8 @@ exports.getPropertyVerificationStatus = async (req, res, next) => {
 
   try {
     const result = await pool.query(
-      `SELECT id, property_document_url, property_photos, latitude, longitude, address, status, admin_notes, submitted_at, reviewed_at
-       FROM landlord_property_verification WHERE user_id = $1::uuid`,
+      `SELECT id, property_document_url, property_photos, latitude, longitude, address, status, admin_notes, submitted_at, reviewed_at, review_count
+       FROM landlord_property_verification WHERE user_id = $1::uuid ORDER BY submitted_at DESC LIMIT 1`,
       [userId]
     );
 
@@ -221,7 +286,36 @@ exports.getPropertyVerificationStatus = async (req, res, next) => {
       return res.json({ status: 'not_submitted' });
     }
 
-    res.json(result.rows[0]);
+    const verification = result.rows[0];
+    const now = new Date();
+    const submittedAt = new Date(verification.submitted_at);
+    const daysSinceSubmission = (now - submittedAt) / (1000 * 60 * 60 * 24);
+    
+    // Calculate retry information
+    let canResubmit = false;
+    let retryAfter = 0;
+    let retryReason = '';
+
+    if (verification.status === 'rejected') {
+      const reviewCount = verification.review_count || 0;
+      if (reviewCount >= 3 && daysSinceSubmission < 30) {
+        retryAfter = Math.ceil(30 - daysSinceSubmission);
+        retryReason = 'Too many attempts';
+      } else if (daysSinceSubmission < 7) {
+        retryAfter = Math.ceil(7 - daysSinceSubmission);
+        retryReason = 'Wait period';
+      } else {
+        canResubmit = true;
+      }
+    }
+
+    res.json({
+      ...verification,
+      canResubmit,
+      retryAfter,
+      retryReason,
+      daysSinceSubmission: Math.floor(daysSinceSubmission),
+    });
   } catch (err) {
     next(err);
   }
@@ -256,12 +350,23 @@ exports.reviewPropertyVerification = async (req, res, next) => {
   }
 
   try {
-    await pool.query(
-      `UPDATE landlord_property_verification 
-       SET status = $1, admin_notes = $2, reviewed_at = NOW(), reviewed_by = $3, updated_at = NOW()
-       WHERE id = $4`,
-      [status, adminNotes || null, adminId, verificationId]
-    );
+    // When rejecting, increment the review count
+    if (status === 'rejected') {
+      await pool.query(
+        `UPDATE landlord_property_verification 
+         SET status = $1, admin_notes = $2, reviewed_at = NOW(), reviewed_by = $3, 
+             review_count = COALESCE(review_count, 0) + 1, updated_at = NOW()
+         WHERE id = $4`,
+        [status, adminNotes || null, adminId, verificationId]
+      );
+    } else {
+      await pool.query(
+        `UPDATE landlord_property_verification 
+         SET status = $1, admin_notes = $2, reviewed_at = NOW(), reviewed_by = $3, updated_at = NOW()
+         WHERE id = $4`,
+        [status, adminNotes || null, adminId, verificationId]
+      );
+    }
 
     res.json({ message: `Property verification ${status} successfully` });
   } catch (err) {

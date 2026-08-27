@@ -15,6 +15,7 @@ const errorHandler = require('./middleware/errorHandler');
 const commentRoutes = require('./routes/commentRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const verificationRoutes = require('./routes/verificationRoutes');
+const adminRoutes = require('./routes/adminRoutes');
 
 const app = express();
 
@@ -91,6 +92,7 @@ app.use('/api/agreements', agreementRoutes);
 app.use('/api/comments', commentRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/verification', verificationRoutes);
+app.use('/api/admin', adminRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
