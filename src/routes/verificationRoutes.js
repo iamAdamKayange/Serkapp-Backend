@@ -14,7 +14,8 @@ const upload = multer({ storage: storage });
 // Landlord: Submit identity verification (with file uploads)
 router.post('/identity', authMiddleware, upload.fields([
   { name: 'idPhoto', maxCount: 1 },
-  { name: 'selfie', maxCount: 1 }
+  { name: 'selfie', maxCount: 1 },
+  { name: 'idDocument', maxCount: 1 } // PDF/DOC support
 ]), verificationController.submitIdentityVerification);
 
 // Landlord: Get identity verification status

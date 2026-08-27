@@ -11,6 +11,7 @@ exports.submitIdentityVerification = async (req, res, next) => {
   // Files from multer
   const idPhoto = req.files?.idPhoto?.[0];
   const selfie = req.files?.selfie?.[0];
+  const idDocument = req.files?.idDocument?.[0]; // Optional PDF/DOC
 
   if (!fullName || !ninNumber || !idPhoto || !selfie) {
     return res.status(400).json({ error: 'Full name, NIN number, ID photo and selfie are required' });
@@ -37,26 +38,34 @@ exports.submitIdentityVerification = async (req, res, next) => {
     // Convert buffer to base64 for upload
     const idPhotoBase64 = idPhoto.buffer.toString('base64');
     const selfieBase64 = selfie.buffer.toString('base64');
-
+    
     // Upload images to Spaces
     const idPhotoUrl = await uploadToSpaces(idPhotoBase64, 'identity-verification');
     const selfieUrl = await uploadToSpaces(selfieBase64, 'identity-verification');
+    
+    // Upload optional ID document (PDF/DOC)
+    let idDocumentUrl = null;
+    if (idDocument) {
+      const idDocumentBase64 = idDocument.buffer.toString('base64');
+      idDocumentUrl = await uploadToSpaces(idDocumentBase64, 'identity-verification-docs');
+    }
 
     if (existing.rows.length > 0) {
       // Update existing record
       await pool.query(
         `UPDATE landlord_identity_verification 
          SET full_name = $1, nin_number = $2, id_photo_url = $3, selfie_photo_url = $4, 
-             status = 'pending', admin_notes = NULL, submitted_at = NOW(), reviewed_at = NULL, reviewed_by = NULL, updated_at = NOW()
-         WHERE user_id = $5::uuid`,
-        [fullName, ninNumber, idPhotoUrl, selfieUrl, userId]
+             id_document_url = $5, status = 'pending', admin_notes = NULL, submitted_at = NOW(), 
+             reviewed_at = NULL, reviewed_by = NULL, updated_at = NOW()
+         WHERE user_id = $6::uuid`,
+        [fullName, ninNumber, idPhotoUrl, selfieUrl, idDocumentUrl, userId]
       );
     } else {
       // Create new record
       await pool.query(
-        `INSERT INTO landlord_identity_verification (user_id, full_name, nin_number, id_photo_url, selfie_photo_url, status, submitted_at)
-         VALUES ($1::uuid, $2, $3, $4, $5, 'pending', NOW())`,
-        [userId, fullName, ninNumber, idPhotoUrl, selfieUrl]
+        `INSERT INTO landlord_identity_verification (user_id, full_name, nin_number, id_photo_url, selfie_photo_url, id_document_url, status, submitted_at)
+         VALUES ($1::uuid, $2, $3, $4, $5, $6, 'pending', NOW())`,
+        [userId, fullName, ninNumber, idPhotoUrl, selfieUrl, idDocumentUrl]
       );
     }
 
@@ -88,17 +97,16 @@ exports.getIdentityVerificationStatus = async (req, res, next) => {
   }
 };
 
-// Admin: Get all pending identity verifications
+// Admin: Get all identity verifications
 exports.getPendingIdentityVerifications = async (req, res, next) => {
   try {
     const result = await pool.query(
-      `SELECT liv.id, liv.user_id, liv.full_name, liv.nin_number, liv.id_photo_url, liv.selfie_photo_url, 
+      `SELECT liv.id, liv.user_id, liv.full_name, liv.nin_number, liv.id_photo_url, liv.selfie_photo_url, liv.id_document_url,
               liv.status, liv.admin_notes, liv.submitted_at, liv.reviewed_at, liv.reviewed_by,
               u.email, u.phone
        FROM landlord_identity_verification liv
        JOIN users u ON liv.user_id = u.id
-       WHERE liv.status = 'pending'
-       ORDER BY liv.submitted_at ASC`
+       ORDER BY liv.submitted_at DESC`
     );
 
     res.json(result.rows);
@@ -219,7 +227,7 @@ exports.getPropertyVerificationStatus = async (req, res, next) => {
   }
 };
 
-// Admin: Get all pending property verifications
+// Admin: Get all property verifications
 exports.getPendingPropertyVerifications = async (req, res, next) => {
   try {
     const result = await pool.query(
@@ -228,8 +236,7 @@ exports.getPendingPropertyVerifications = async (req, res, next) => {
               u.email, u.phone
        FROM landlord_property_verification lpv
        JOIN users u ON lpv.user_id = u.id
-       WHERE lpv.status = 'pending'
-       ORDER BY lpv.submitted_at ASC`
+       ORDER BY lpv.submitted_at DESC`
     );
 
     res.json(result.rows);
