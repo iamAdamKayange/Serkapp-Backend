@@ -1,6 +1,6 @@
 const express = require('express');
 const { authMiddleware, landlordOnly } = require('../middleware/auth');
-const upload = require('../middleware/upload');
+const { upload } = require('../middleware/upload');
 const {
   uploadMedia,
   uploadThumbnail,
