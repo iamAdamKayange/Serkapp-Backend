@@ -1,5 +1,5 @@
 const pool = require('../config/db');
-const { uploadToSpaces } = require('../services/imageUploadService');
+const { uploadToSpaces, FOLDER_TYPES } = require('../services/imageUploadService');
 const {
   insertNotificationRecord,
   sendNotificationToRoles,
@@ -161,14 +161,29 @@ exports.submitIdentityVerification = async (req, res, next) => {
     const selfieBase64 = selfie.buffer.toString('base64');
     
     // Upload images to Spaces
-    const idPhotoUrl = await uploadToSpaces(idPhotoBase64, 'identity-verification');
-    const selfieUrl = await uploadToSpaces(selfieBase64, 'identity-verification');
+    const idPhotoUrl = await uploadToSpaces(
+      idPhoto.buffer, 
+      idPhoto.originalname || 'id-photo.jpg',
+      idPhoto.mimetype || 'image/jpeg',
+      FOLDER_TYPES.VERIFICATION_DOCUMENTS
+    );
+    const selfieUrl = await uploadToSpaces(
+      selfie.buffer,
+      selfie.originalname || 'selfie.jpg', 
+      selfie.mimetype || 'image/jpeg',
+      FOLDER_TYPES.VERIFICATION_DOCUMENTS
+    );
     
     // Upload optional ID document (PDF/DOC)
     let idDocumentUrl = null;
     if (idDocument) {
       const idDocumentBase64 = idDocument.buffer.toString('base64');
-      idDocumentUrl = await uploadToSpaces(idDocumentBase64, 'identity-verification-docs');
+      idDocumentUrl = await uploadToSpaces(
+        idDocument.buffer,
+        idDocument.originalname || 'id-document.pdf',
+        idDocument.mimetype || 'application/pdf',
+        FOLDER_TYPES.VERIFICATION_DOCUMENTS
+      );
     }
 
     if (existing.rows.length > 0) {
@@ -454,9 +469,19 @@ exports.submitPropertyVerification = async (req, res, next) => {
     const photoBase64Array = propertyPhotos.map(photo => photo.buffer.toString('base64'));
 
     // Upload document and photos to Spaces
-    const documentUrl = await uploadToSpaces(documentBase64, 'property-verification');
+    const documentUrl = await uploadToSpaces(
+      propertyDocument.buffer,
+      propertyDocument.originalname || 'property-document.pdf',
+      propertyDocument.mimetype || 'application/pdf',
+      FOLDER_TYPES.VERIFICATION_DOCUMENTS
+    );
     const photoUrls = await Promise.all(
-      photoBase64Array.map(photoBase64 => uploadToSpaces(photoBase64, 'property-verification'))
+      propertyPhotos.map(photo => uploadToSpaces(
+        photo.buffer,
+        photo.originalname || 'property-photo.jpg',
+        photo.mimetype || 'image/jpeg',
+        FOLDER_TYPES.VERIFICATION_DOCUMENTS
+      ))
     );
 
     if (existing.rows.length > 0) {

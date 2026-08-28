@@ -1,5 +1,5 @@
 const pool = require('../config/db');
-const { uploadMultiple, deleteFromSpaces, uploadToSpaces } = require('../services/imageUploadService');
+const { uploadMultiple, deleteFromSpaces, uploadToSpaces, FOLDER_TYPES } = require('../services/imageUploadService');
 const { emitToAll, emitToLandlord } = require('../services/socketService');
 const { createHouseCreatedNotification } = require('../services/notificationService');
 
@@ -153,7 +153,7 @@ exports.uploadMedia = async (req, res, next) => {
     return res.status(400).json({ error: 'Hakuna faili zilizopakiwa.' });
   }
   try {
-    const results = await uploadMultiple(req.files);
+    const results = await uploadMultiple(req.files, FOLDER_TYPES.HOUSE_IMAGES);
     res.status(200).json({ files: results });
   } catch (error) {
     console.error('Upload error:', error);
@@ -170,7 +170,8 @@ exports.uploadThumbnail = async (req, res, next) => {
     const result = await uploadToSpaces(
       req.file.buffer,
       req.file.originalname,
-      req.file.mimetype
+      req.file.mimetype,
+      FOLDER_TYPES.HOUSE_IMAGES
     );
     res.status(200).json({ url: result.url });
   } catch (error) {

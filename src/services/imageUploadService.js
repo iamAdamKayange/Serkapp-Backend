@@ -36,7 +36,15 @@ const sanitizeFilename = (filename) => {
   return `${baseName || 'media'}-${crypto.randomUUID()}${extension}`;
 };
 
-const getFolderForMime = (mimeType = '') => (mimeType.startsWith('video/') ? 'videos' : 'images');
+// Folder types for organized storage
+const FOLDER_TYPES = {
+  PROFILE_PICTURES: 'profile-pictures',
+  HOUSE_IMAGES: 'house-images', 
+  VIDEOS: 'videos',
+  VERIFICATION_DOCUMENTS: 'verification-documents',
+};
+
+const getFolderForMime = (mimeType = '') => (mimeType.startsWith('video/') ? FOLDER_TYPES.VIDEOS : FOLDER_TYPES.HOUSE_IMAGES);
 
 const getKeyFromUrl = (url) => {
   if (!url) return null;
@@ -64,14 +72,17 @@ const getKeyFromUrl = (url) => {
   }
 };
 
-const uploadToSpaces = async (buffer, originalName, mimeType) => {
+const uploadToSpaces = async (buffer, originalName, mimeType, folderType = null) => {
   const missingEnv = getMissingEnv();
   if (missingEnv.length > 0) {
     throw new Error(`DigitalOcean Spaces is missing environment values: ${missingEnv.join(', ')}`);
   }
 
   const resourceType = mimeType?.startsWith('video/') ? 'video' : 'image';
-  const key = `serkapp_media/${getFolderForMime(mimeType)}/${sanitizeFilename(originalName)}`;
+  
+  // Use provided folder type or detect from mime type
+  const folder = folderType || getFolderForMime(mimeType);
+  const key = `serkapp_media/${folder}/${sanitizeFilename(originalName)}`;
 
   await spacesClient.send(
     new PutObjectCommand({
@@ -87,6 +98,7 @@ const uploadToSpaces = async (buffer, originalName, mimeType) => {
     url: `${normalizeCdnBase()}/${encodeURI(key)}`,
     key,
     resourceType,
+    folder,
   };
 };
 
@@ -108,13 +120,18 @@ const deleteFromSpaces = async (url) => {
   }
 };
 
-const uploadMultiple = async (files) => {
+const uploadMultiple = async (files, folderType = null) => {
   const results = [];
   for (const file of files) {
-    const result = await uploadToSpaces(file.buffer, file.originalname, file.mimetype);
+    const result = await uploadToSpaces(file.buffer, file.originalname, file.mimetype, folderType);
     results.push(result);
   }
   return results;
 };
 
-module.exports = { uploadToSpaces, uploadMultiple, deleteFromSpaces };
+module.exports = { 
+  uploadToSpaces, 
+  uploadMultiple, 
+  deleteFromSpaces,
+  FOLDER_TYPES 
+};

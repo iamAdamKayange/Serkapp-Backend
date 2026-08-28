@@ -1,7 +1,7 @@
 const bcrypt = require('bcryptjs');
 const pool = require('../config/db');
 const generateToken = require('../utils/generateToken');
-const { uploadToSpaces } = require('../services/imageUploadService');
+const { uploadToSpaces, FOLDER_TYPES, deleteFromSpaces } = require('../services/imageUploadService');
 
 const ensureUserProfileColumns = async () => {
   await pool.query(`
@@ -133,6 +133,7 @@ exports.updateMe = async (req, res, next) => {
         avatar.buffer,
         avatar.originalname || 'avatar.jpg',
         avatar.mimetype || 'image/jpeg',
+        FOLDER_TYPES.PROFILE_PICTURES
       );
       profileImageUrl = uploaded.url;
     }
@@ -184,6 +185,7 @@ exports.updateMeAvatar = async (req, res, next) => {
       avatar.buffer,
       avatar.originalname || 'avatar.jpg',
       avatar.mimetype || 'image/jpeg',
+      FOLDER_TYPES.PROFILE_PICTURES
     );
 
     const result = await pool.query(
@@ -206,5 +208,115 @@ exports.updateMeAvatar = async (req, res, next) => {
     });
   } catch (err) {
     next(err);
+  }
+};
+
+// @route DELETE /api/auth/me (protected) - Delete Account
+exports.deleteAccount = async (req, res, next) => {
+  const userId = req.user.id;
+  const client = await pool.connect();
+  
+  try {
+    await client.query('BEGIN');
+    
+    // Get user info before deletion
+    const userResult = await client.query(
+      'SELECT role, profile_image_url FROM users WHERE id = $1',
+      [userId]
+    );
+    
+    if (userResult.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const user = userResult.rows[0];
+    
+    // Role-specific cleanup
+    if (user.role === 'landlord') {
+      // Delete landlord's houses and their media
+      const housesResult = await client.query(
+        'SELECT id FROM houses WHERE landlord_id = $1',
+        [userId]
+      );
+      
+      for (const house of housesResult.rows) {
+        // Delete house images and videos from storage
+        const imagesResult = await client.query(
+          'SELECT image_url FROM house_images WHERE house_id = $1',
+          [house.id]
+        );
+        for (const image of imagesResult.rows) {
+          await deleteFromSpaces(image.image_url);
+        }
+        
+        const videosResult = await client.query(
+          'SELECT video_url, thumbnail_url FROM house_videos WHERE house_id = $1',
+          [house.id]
+        );
+        for (const video of videosResult.rows) {
+          await deleteFromSpaces(video.video_url);
+          if (video.thumbnail_url) {
+            await deleteFromSpaces(video.thumbnail_url);
+          }
+        }
+        
+        const thumbnailsResult = await client.query(
+          'SELECT thumbnail_url FROM house_video_thumbnails WHERE house_id = $1',
+          [house.id]
+        );
+        for (const thumbnail of thumbnailsResult.rows) {
+          await deleteFromSpaces(thumbnail.thumbnail_url);
+        }
+        
+        // Delete house records
+        await client.query('DELETE FROM house_images WHERE house_id = $1', [house.id]);
+        await client.query('DELETE FROM house_videos WHERE house_id = $1', [house.id]);
+        await client.query('DELETE FROM house_video_thumbnails WHERE house_id = $1', [house.id]);
+        await client.query('DELETE FROM houses WHERE id = $1', [house.id]);
+      }
+      
+      // Delete verification records
+      await client.query('DELETE FROM landlord_identity_verification WHERE user_id = $1', [userId]);
+      await client.query('DELETE FROM landlord_property_verification WHERE user_id = $1', [userId]);
+    }
+    
+    // Common cleanup for all roles
+    // Delete profile image from storage
+    if (user.profile_image_url) {
+      await deleteFromSpaces(user.profile_image_url);
+    }
+    
+    // Delete user-related data
+    await client.query('DELETE FROM app_device_tokens WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM app_notifications WHERE target_user_id = $1', [userId]);
+    await client.query('DELETE FROM app_saved_houses WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM app_notification_dismissals WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM app_alert_preferences WHERE user_id = $1', [userId]);
+    
+    // Delete comments and likes
+    await client.query('DELETE FROM comment_likes WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM video_likes WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM video_comments WHERE user_id = $1', [userId]);
+    
+    // Delete rental agreements and payments
+    await client.query('DELETE FROM payments WHERE user_id = $1', [userId]);
+    await client.query('DELETE FROM rental_agreements WHERE tenant_id = $1', [userId]);
+    
+    // Finally delete the user
+    await client.query('DELETE FROM users WHERE id = $1', [userId]);
+    
+    await client.query('COMMIT');
+    
+    res.json({
+      message: 'Account deleted successfully',
+      deletedUserId: userId,
+    });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('Delete account error:', err);
+    next(err);
+  } finally {
+    client.release();
   }
 };
