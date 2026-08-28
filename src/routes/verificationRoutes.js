@@ -21,6 +21,9 @@ router.post('/identity', authMiddleware, upload.fields([
 // Landlord: Get identity verification status
 router.get('/identity/status', authMiddleware, verificationController.getIdentityVerificationStatus);
 
+// Landlord: Cancel identity verification
+router.post('/identity/cancel', authMiddleware, verificationController.cancelIdentityVerification);
+
 // Admin: Get all pending identity verifications
 router.get('/identity/pending', adminMiddleware, verificationController.getPendingIdentityVerifications);
 
@@ -37,6 +40,12 @@ router.post('/property', authMiddleware, upload.fields([
 
 // Landlord: Get property verification status
 router.get('/property/status', authMiddleware, verificationController.getPropertyVerificationStatus);
+
+// Landlord: Cancel property verification
+router.post('/property/cancel', authMiddleware, verificationController.cancelPropertyVerification);
+
+// Landlord: Cancel all active verification requests
+router.post('/cancel', authMiddleware, verificationController.cancelAllVerificationRequests);
 
 // Admin: Get all pending property verifications
 router.get('/property/pending', adminMiddleware, verificationController.getPendingPropertyVerifications);

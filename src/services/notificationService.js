@@ -51,9 +51,15 @@ const ensureNotificationTables = async () => {
       body TEXT NOT NULL,
       house_id TEXT,
       data JSONB NOT NULL DEFAULT '{}'::jsonb,
+      target_user_id TEXT,
       target_roles TEXT[] NOT NULL DEFAULT '{normal,landlord,admin}',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `);
+
+  await pool.query(`
+    ALTER TABLE app_notifications
+    ADD COLUMN IF NOT EXISTS target_user_id TEXT
   `);
 
   await pool.query(`
@@ -261,6 +267,16 @@ const ensureNotificationTables = async () => {
   `);
 
   await pool.query(`
+    ALTER TABLE landlord_identity_verification
+    ADD COLUMN IF NOT EXISTS cancel_count INTEGER NOT NULL DEFAULT 0
+  `);
+
+  await pool.query(`
+    ALTER TABLE landlord_identity_verification
+    ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS landlord_property_verification (
       id BIGSERIAL PRIMARY KEY,
       user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -284,6 +300,16 @@ const ensureNotificationTables = async () => {
   await pool.query(`
     ALTER TABLE landlord_property_verification
     ADD COLUMN IF NOT EXISTS review_count INTEGER NOT NULL DEFAULT 0
+  `);
+
+  await pool.query(`
+    ALTER TABLE landlord_property_verification
+    ADD COLUMN IF NOT EXISTS cancel_count INTEGER NOT NULL DEFAULT 0
+  `);
+
+  await pool.query(`
+    ALTER TABLE landlord_property_verification
+    ADD COLUMN IF NOT EXISTS cancelled_at TIMESTAMPTZ
   `);
 
   // Indexes for landlord verification tables
@@ -349,6 +375,7 @@ const listNotifications = async ({
   before,
   token,
   installCutoffAt,
+  userId,
   userRole,
 } = {}) => {
   const values = [Math.min(Math.max(Number(limit) || 50, 1), 100)];
@@ -393,6 +420,16 @@ const listNotifications = async ({
     `);
   }
 
+  if (userId) {
+    values.push(userId);
+    conditions.push(`
+      (
+        app_notifications.target_user_id IS NULL
+        OR app_notifications.target_user_id = $${values.length}
+      )
+    `);
+  }
+
   // Role-based filtering
   if (userRole) {
     values.push(userRole);
@@ -409,7 +446,7 @@ const listNotifications = async ({
 
   const result = await pool.query(
     `
-      SELECT id, type, title, body, house_id, data, created_at
+      SELECT id, type, title, body, house_id, data, target_user_id, created_at
       FROM app_notifications
       ${where}
       ORDER BY created_at DESC
@@ -575,6 +612,96 @@ const findAllDeviceTokens = async ({ excludeTokens = [] } = {}) => {
   return result.rows.map((row) => row.fcm_token);
 };
 
+const findDeviceTokensByRoles = async ({ roles = [], excludeTokens = [] } = {}) => {
+  const normalizedRoles = normalizeList(roles);
+  if (normalizedRoles.length === 0) {
+    return findAllDeviceTokens({ excludeTokens });
+  }
+
+  const result = await pool.query(
+    `
+      SELECT DISTINCT dt.fcm_token
+      FROM app_device_tokens dt
+      INNER JOIN users u ON u.id::text = dt.user_id
+      WHERE u.role = ANY($1::text[])
+        AND dt.last_seen_at > NOW() - INTERVAL '120 days'
+        AND NOT (dt.fcm_token = ANY($2::text[]))
+    `,
+    [normalizedRoles, excludeTokens],
+  );
+
+  return result.rows.map((row) => row.fcm_token);
+};
+
+const findDeviceTokensByUserId = async ({ userId, excludeTokens = [] } = {}) => {
+  if (!userId) return [];
+
+  const result = await pool.query(
+    `
+      SELECT DISTINCT dt.fcm_token
+      FROM app_device_tokens dt
+      WHERE dt.user_id = $1
+        AND dt.last_seen_at > NOW() - INTERVAL '120 days'
+        AND NOT (dt.fcm_token = ANY($2::text[]))
+    `,
+    [String(userId), excludeTokens],
+  );
+
+  return result.rows.map((row) => row.fcm_token);
+};
+
+const sendNotificationToRoles = async ({
+  roles = [],
+  title,
+  body,
+  data = {},
+  type = '',
+  excludeTokens = [],
+}) => {
+  const tokens = await findDeviceTokensByRoles({ roles, excludeTokens });
+  if (tokens.length === 0) {
+    return { sent: false, successCount: 0, failureCount: 0 };
+  }
+
+  return sendToTokens({ tokens, title, body, data, type });
+};
+
+const sendNotificationToUser = async ({
+  userId,
+  title,
+  body,
+  data = {},
+  type = '',
+  excludeTokens = [],
+}) => {
+  const tokens = await findDeviceTokensByUserId({ userId, excludeTokens });
+  if (tokens.length === 0) {
+    return { sent: false, successCount: 0, failureCount: 0 };
+  }
+
+  return sendToTokens({ tokens, title, body, data, type });
+};
+
+const insertNotificationRecord = async ({
+  type,
+  title,
+  body,
+  houseId = null,
+  data = {},
+  targetUserId = null,
+  targetRoles = ['normal', 'landlord', 'admin'],
+}) => {
+  const result = await pool.query(
+    `
+      INSERT INTO app_notifications (type, title, body, house_id, data, target_user_id, target_roles)
+      VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7::text[])
+      RETURNING id, type, title, body, house_id, data, created_at
+    `,
+    [type, title, body, houseId, JSON.stringify(data), targetUserId, targetRoles],
+  );
+  return result.rows[0];
+};
+
 const deleteInvalidTokens = async (invalidTokens = []) => {
   if (!Array.isArray(invalidTokens) || invalidTokens.length === 0) return;
   await pool.query(
@@ -646,17 +773,28 @@ const createHouseCreatedNotification = async ({
     district,
     houseType,
     type: 'house_created',
+    notificationType: 'house_created',
     click_action: 'FLUTTER_NOTIFICATION_CLICK',
   };
 
-  const result = await pool.query(
-    `
-      INSERT INTO app_notifications (type, title, body, house_id, data, target_roles)
-      VALUES ($1, $2, $3, $4, $5::jsonb, $6::text[])
-      RETURNING id, type, title, body, house_id, data, created_at
-    `,
-    ['house_created', title, body, houseId, JSON.stringify(data), ['normal', 'landlord', 'admin']],
-  );
+  const normalNotification = {
+    type: 'house_created',
+    title,
+    body,
+    targetRoles: ['normal'],
+  };
+  const landlordNotification = {
+    type: 'house_created',
+    title: 'Nyumba yako imechapishwa',
+    body: `${houseName || 'Nyumba yako'} imeongezwa na iko tayari kuonekana kwa wapangaji.`,
+    targetRoles: ['landlord'],
+  };
+  const adminNotification = {
+    type: 'house_created',
+    title: 'Nyumba mpya imeongezwa kwenye mfumo',
+    body: `${houseName || 'Nyumba'} imeongezwa na landlord ${landlordId}.`,
+    targetRoles: ['admin'],
+  };
 
   try {
     const matchingTokens = await findMatchingAlertTokens({
@@ -672,24 +810,84 @@ const createHouseCreatedNotification = async ({
       title: smartTitle,
       body,
       data,
+      type: 'house_created',
     });
     await deleteInvalidTokens(smartDelivery.invalidTokens);
 
-    const generalTokens = await findAllDeviceTokens({
-      excludeTokens: matchingTokens,
-    });
-    const generalDelivery = await sendToTokens({
-      tokens: generalTokens,
+    const normalDelivery = await sendNotificationToRoles({
+      roles: ['normal'],
       title,
       body,
       data,
+      type: 'house_created',
+      excludeTokens: matchingTokens,
     });
-    await deleteInvalidTokens(generalDelivery.invalidTokens);
+    await deleteInvalidTokens(normalDelivery.invalidTokens);
+
+    const landlordDelivery = await sendNotificationToRoles({
+      roles: ['landlord'],
+      title: landlordNotification.title,
+      body: landlordNotification.body,
+      data: {
+        ...data,
+        notificationType: 'house_created_landlord',
+      },
+      type: 'house_created',
+    });
+    await deleteInvalidTokens(landlordDelivery.invalidTokens);
+
+    const adminDelivery = await sendNotificationToRoles({
+      roles: ['admin'],
+      title: adminNotification.title,
+      body: adminNotification.body,
+      data: {
+        ...data,
+        notificationType: 'house_created_admin',
+      },
+      type: 'house_created',
+    });
+    await deleteInvalidTokens(adminDelivery.invalidTokens);
   } catch (error) {
     console.error('Failed to send house FCM notification:', error);
   }
 
-  return result.rows[0];
+  const stored = await Promise.all([
+    insertNotificationRecord({
+      type: normalNotification.type,
+      title: normalNotification.title,
+      body: normalNotification.body,
+      houseId,
+      data: {
+        ...data,
+        notificationType: 'house_created_normal',
+      },
+      targetRoles: normalNotification.targetRoles,
+    }),
+    insertNotificationRecord({
+      type: landlordNotification.type,
+      title: landlordNotification.title,
+      body: landlordNotification.body,
+      houseId,
+      data: {
+        ...data,
+        notificationType: 'house_created_landlord',
+      },
+      targetRoles: landlordNotification.targetRoles,
+    }),
+    insertNotificationRecord({
+      type: adminNotification.type,
+      title: adminNotification.title,
+      body: adminNotification.body,
+      houseId,
+      data: {
+        ...data,
+        notificationType: 'house_created_admin',
+      },
+      targetRoles: adminNotification.targetRoles,
+    }),
+  ]);
+
+  return stored[0];
 };
 
 module.exports = {
@@ -704,4 +902,9 @@ module.exports = {
   saveHouse,
   removeSavedHouse,
   createHouseCreatedNotification,
+  findDeviceTokensByRoles,
+  findDeviceTokensByUserId,
+  sendNotificationToRoles,
+  sendNotificationToUser,
+  insertNotificationRecord,
 };

@@ -9,6 +9,9 @@ class House {
     this.ownerName = row.owner_name;
     this.houseNumber = row.house_number;
     this.phone = row.phone;
+    this.landlordFirstName = row.landlord_first_name;
+    this.landlordLastName = row.landlord_last_name;
+    this.landlordProfileImageUrl = row.landlord_profile_image_url;
     this.firstName = row.brand_name;
     this.lastName = row.house_number;
     this.name = row.owner_name;
@@ -58,6 +61,9 @@ class House {
     const query = `
       SELECT 
         h.*,
+        u.first_name AS landlord_first_name,
+        u.last_name AS landlord_last_name,
+        u.profile_image_url AS landlord_profile_image_url,
         ST_Y(h.geom) AS latitude,
         ST_X(h.geom) AS longitude,
         COALESCE(
@@ -73,11 +79,12 @@ class House {
           '[]'
         ) AS video_thumbnails
       FROM houses h
+      LEFT JOIN users u ON u.id = h.landlord_id
       LEFT JOIN house_images hi ON hi.house_id = h.id
       LEFT JOIN house_videos hv ON hv.house_id = h.id
       LEFT JOIN house_video_thumbnails hvt ON hvt.house_id = h.id
       WHERE h.id = $1
-      GROUP BY h.id
+      GROUP BY h.id, u.first_name, u.last_name, u.profile_image_url
     `;
     const result = await pool.query(query, [id]);
     if (result.rows.length === 0) return null;
@@ -88,6 +95,9 @@ class House {
     let query = `
       SELECT 
         h.*,
+        u.first_name AS landlord_first_name,
+        u.last_name AS landlord_last_name,
+        u.profile_image_url AS landlord_profile_image_url,
         ST_Y(h.geom) AS latitude,
         ST_X(h.geom) AS longitude,
         COALESCE(
@@ -103,6 +113,7 @@ class House {
           '[]'
         ) AS video_thumbnails
       FROM houses h
+      LEFT JOIN users u ON u.id = h.landlord_id
       LEFT JOIN house_images hi ON hi.house_id = h.id
       LEFT JOIN house_videos hv ON hv.house_id = h.id
       LEFT JOIN house_video_thumbnails hvt ON hvt.house_id = h.id
@@ -137,7 +148,7 @@ class House {
       values.push(pattern, pattern, pattern, pattern, pattern);
     }
 
-    query += ` GROUP BY h.id ORDER BY h.created_at DESC`;
+    query += ` GROUP BY h.id, u.first_name, u.last_name, u.profile_image_url ORDER BY h.created_at DESC`;
     const result = await pool.query(query, values);
     return result.rows.map(row => new House(row));
   }

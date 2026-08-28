@@ -31,6 +31,7 @@ exports.getNotifications = async (req, res, next) => {
       before: req.query.before,
       token: req.query.token,
       installCutoffAt: req.query.installCutoffAt,
+      userId: req.user?.id,
       userRole: userRole,
     });
     res.json(notifications);

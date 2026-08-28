@@ -8,6 +8,26 @@ const { getMessaging } = require('firebase-admin/messaging');
 
 let initialized = false;
 
+const resolveNotificationChannel = (type = '') => {
+  const normalized = String(type || '').toLowerCase();
+  if (normalized.includes('payment') || normalized.includes('rent')) {
+    return 'serik_payments';
+  }
+  if (normalized.includes('verification') || normalized.includes('verify')) {
+    return 'serik_verification';
+  }
+  if (normalized.includes('maintenance') || normalized.includes('repair')) {
+    return 'serik_maintenance';
+  }
+  if (normalized.includes('alert') || normalized.includes('smart')) {
+    return 'serik_alerts';
+  }
+  if (normalized.includes('house') || normalized.includes('property')) {
+    return 'serik_houses';
+  }
+  return 'serik_general';
+};
+
 const parseServiceAccount = () => {
   const rawJson = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
   if (rawJson) return JSON.parse(rawJson);
@@ -49,7 +69,7 @@ const initFirebaseAdmin = () => {
   }
 };
 
-const sendToTopic = async ({ topic, title, body, data = {} }) => {
+const sendToTopic = async ({ topic, title, body, data = {}, type = '' }) => {
   if (!initFirebaseAdmin()) {
     return { sent: false, reason: 'firebase-admin-not-configured' };
   }
@@ -66,7 +86,7 @@ const sendToTopic = async ({ topic, title, body, data = {} }) => {
     android: {
       priority: 'high',
       notification: {
-        channelId: 'new_houses',
+        channelId: resolveNotificationChannel(type || stringData.notificationType || stringData.type),
         sound: 'default',
       },
     },
@@ -82,7 +102,7 @@ const sendToTopic = async ({ topic, title, body, data = {} }) => {
   return { sent: true, messageId: response };
 };
 
-const sendToTokens = async ({ tokens, title, body, data = {} }) => {
+const sendToTokens = async ({ tokens, title, body, data = {}, type = '' }) => {
   if (!Array.isArray(tokens) || tokens.length === 0) {
     return { sent: false, successCount: 0, failureCount: 0 };
   }
@@ -113,7 +133,7 @@ const sendToTokens = async ({ tokens, title, body, data = {} }) => {
       android: {
         priority: 'high',
         notification: {
-          channelId: 'new_houses',
+          channelId: resolveNotificationChannel(type || stringData.notificationType || stringData.type),
           sound: 'default',
         },
       },
@@ -146,4 +166,5 @@ module.exports = {
   initFirebaseAdmin,
   sendToTopic,
   sendToTokens,
+  resolveNotificationChannel,
 };

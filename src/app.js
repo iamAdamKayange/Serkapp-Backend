@@ -16,6 +16,7 @@ const commentRoutes = require('./routes/commentRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
 const verificationRoutes = require('./routes/verificationRoutes');
 const adminRoutes = require('./routes/adminRoutes');
+const appContentRoutes = require('./routes/appContentRoutes');
 
 const app = express();
 
@@ -93,6 +94,7 @@ app.use('/api/comments', commentRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/verification', verificationRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/content', appContentRoutes);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -117,7 +119,8 @@ app.get('/', (req, res) => {
       locations: '/api/locations',
       payments: '/api/payments',
       agreements: '/api/agreements',
-      notifications: '/api/notifications'
+      notifications: '/api/notifications',
+      content: '/api/content'
     }
   });
 });
