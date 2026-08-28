@@ -199,7 +199,7 @@ exports.getAllHouses = async (req, res, next) => {
         h.brand_name, h.owner_name, h.house_number, h.phone,
         u.first_name AS landlord_first_name,
         u.last_name AS landlord_last_name,
-        u.profile_image_url AS landlord_profile_image_url,
+        COALESCE(u.profile_image_url, '') AS landlord_profile_image_url,
         h.status, h.type, h.bedrooms, h.description,
         h.rent_price, h.deposit_amount, h.location_address,
         h.region, h.district, h.division, h.ward, h.village, h.street,
@@ -235,7 +235,7 @@ exports.getAllHouses = async (req, res, next) => {
       LEFT JOIN video_like_counts vl ON vl.video_key = hv.id::text
       LEFT JOIN video_comment_counts vc ON vc.video_key = hv.id::text
       WHERE h.status = 'Inapatikana'
-      GROUP BY h.id, u.first_name, u.last_name, u.profile_image_url
+      GROUP BY h.id, u.first_name, u.last_name
       ORDER BY h.created_at DESC
     `;
     const result = await pool.query(query);
@@ -271,7 +271,7 @@ exports.getVideoFeed = async (req, res, next) => {
         h.street,
         u.first_name AS landlord_first_name,
         u.last_name AS landlord_last_name,
-        u.profile_image_url AS landlord_profile_image_url,
+        COALESCE(u.profile_image_url, '') AS landlord_profile_image_url,
         ST_Y(h.geom) AS latitude,
         ST_X(h.geom) AS longitude,
         COALESCE(
@@ -297,7 +297,7 @@ exports.getVideoFeed = async (req, res, next) => {
       LEFT JOIN video_like_counts vl ON vl.video_key = hv.id::text
       LEFT JOIN video_comment_counts vc ON vc.video_key = hv.id::text
       WHERE h.status = 'Inapatikana'
-      GROUP BY h.id, u.first_name, u.last_name, u.profile_image_url
+      GROUP BY h.id, u.first_name, u.last_name
       ORDER BY h.created_at DESC
     `;
     const result = await pool.query(query);
@@ -318,7 +318,7 @@ exports.getHouseById = async (req, res, next) => {
         h.brand_name, h.owner_name, h.house_number, h.phone,
         u.first_name AS landlord_first_name,
         u.last_name AS landlord_last_name,
-        u.profile_image_url AS landlord_profile_image_url,
+        COALESCE(u.profile_image_url, '') AS landlord_profile_image_url,
         h.status, h.type, h.bedrooms, h.description,
         h.rent_price, h.deposit_amount, h.location_address,
         h.region, h.district, h.division, h.ward, h.village, h.street,
@@ -347,7 +347,7 @@ exports.getHouseById = async (req, res, next) => {
       LEFT JOIN house_videos hv ON hv.house_id = h.id
       LEFT JOIN house_video_thumbnails hvt ON hvt.house_id = h.id
       WHERE h.id = $1
-      GROUP BY h.id, u.first_name, u.last_name, u.profile_image_url
+      GROUP BY h.id, u.first_name, u.last_name
     `;
     const result = await pool.query(query, [id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Nyumba haikupatikana' });
@@ -367,7 +367,7 @@ exports.getMyHouses = async (req, res, next) => {
         h.brand_name, h.owner_name, h.house_number, h.phone,
         u.first_name AS landlord_first_name,
         u.last_name AS landlord_last_name,
-        u.profile_image_url AS landlord_profile_image_url,
+        COALESCE(u.profile_image_url, '') AS landlord_profile_image_url,
         h.status, h.type, h.bedrooms, h.description,
         h.rent_price, h.deposit_amount, h.location_address,
         h.region, h.district, h.division, h.ward, h.village, h.street,
@@ -396,7 +396,7 @@ exports.getMyHouses = async (req, res, next) => {
       LEFT JOIN house_videos hv ON hv.house_id = h.id
       LEFT JOIN house_video_thumbnails hvt ON hvt.house_id = h.id
       WHERE h.landlord_id = $1
-      GROUP BY h.id, u.first_name, u.last_name, u.profile_image_url
+      GROUP BY h.id, u.first_name, u.last_name
       ORDER BY h.created_at DESC
     `;
     const result = await pool.query(query, [req.user.id]);
