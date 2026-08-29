@@ -270,33 +270,6 @@ exports.getVerificationQueue = async (req, res, next) => {
     res.status(500).json({ error: 'Failed to fetch verification queue', details: err.message });
   }
 };
-          phone: row.phone,
-        },
-        submittedAt: row.submitted_at,
-        documentUrl: row.identity_document_url,
-        nidNumber: row.nid_number,
-        status: row.status,
-      })),
-      property: propertyVerifications.rows.map(row => ({
-        id: row.id,
-        type: 'property',
-        user: {
-          email: row.email,
-          name: `${row.first_name} ${row.last_name}`.trim(),
-        },
-        house: {
-          title: row.house_title,
-          location: row.house_location,
-        },
-        submittedAt: row.submitted_at,
-        documentUrl: row.property_document_url,
-        status: row.status,
-      })),
-    });
-  } catch (err) {
-    next(err);
-  }
-};
 
 // Get verification stats
 exports.getVerificationStats = async (req, res, next) => {
