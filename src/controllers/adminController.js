@@ -226,9 +226,9 @@ exports.getVerificationQueue = async (req, res, next) => {
           h.title as house_title,
           h.location as house_location,
           pv.property_document_url
-        FROM property_verification pv
+        FROM landlord_property_verification pv
         JOIN users u ON pv.user_id = u.id
-        JOIN houses h ON pv.house_id = h.id
+        LEFT JOIN houses h ON pv.house_id = h.id
         WHERE pv.status = 'pending'
         ORDER BY pv.submitted_at ASC
         LIMIT 20
@@ -241,7 +241,35 @@ exports.getVerificationQueue = async (req, res, next) => {
         type: 'identity',
         user: {
           email: row.email,
-          name: `${row.first_name} ${row.last_name}`.trim(),
+          name: `${row.first_name || ''} ${row.last_name || ''}`.trim(),
+          phone: row.phone,
+        },
+        submittedAt: row.submitted_at,
+        documentUrl: row.identity_document_url,
+        nidNumber: row.nid_number,
+        status: row.status,
+      })),
+      property: propertyVerifications.rows.map(row => ({
+        id: row.id,
+        type: 'property',
+        user: {
+          email: row.email,
+          name: `${row.first_name || ''} ${row.last_name || ''}`.trim(),
+        },
+        house: row.house_title ? {
+          title: row.house_title,
+          location: row.house_location,
+        } : null,
+        submittedAt: row.submitted_at,
+        documentUrl: row.property_document_url,
+        status: row.status,
+      })),
+    });
+  } catch (err) {
+    console.error('Error in getVerificationQueue:', err);
+    res.status(500).json({ error: 'Failed to fetch verification queue', details: err.message });
+  }
+};
           phone: row.phone,
         },
         submittedAt: row.submitted_at,
@@ -320,7 +348,7 @@ exports.getRecentActivity = async (req, res, next) => {
     res.json({
       users: recentUsers.rows.map(user => ({
         id: user.id,
-        name: `${user.first_name} ${user.last_name}`.trim(),
+        name: `${user.first_name || ''} ${user.last_name || ''}`.trim(),
         email: user.email,
         role: user.role,
         createdAt: user.created_at,
@@ -329,9 +357,9 @@ exports.getRecentActivity = async (req, res, next) => {
         id: house.id,
         title: house.title,
         location: house.location,
-        price: parseFloat(house.price),
+        price: parseFloat(house.price) || 0,
         status: house.status || 'active',
-        landlord: `${house.first_name} ${house.last_name}`.trim(),
+        landlord: `${house.first_name || ''} ${house.last_name || ''}`.trim(),
         landlordEmail: house.email,
         createdAt: house.created_at,
       })),
@@ -342,12 +370,13 @@ exports.getRecentActivity = async (req, res, next) => {
         reviewedAt: verif.reviewed_at,
         user: {
           email: verif.email,
-          name: `${verif.first_name} ${verif.last_name}`.trim(),
+          name: `${verif.first_name || ''} ${verif.last_name || ''}`.trim(),
         },
       })),
     });
   } catch (err) {
-    next(err);
+    console.error('Error in getRecentActivity:', err);
+    res.status(500).json({ error: 'Failed to fetch recent activity', details: err.message });
   }
 };
 
@@ -407,15 +436,21 @@ exports.getNotifications = async (req, res, next) => {
   try {
     const result = await pool.query(`
       SELECT id, title, message, type, created_at, is_read
-      FROM notifications
-      WHERE user_id = $1::uuid
+      FROM app_notifications
+      WHERE target_user_id = $1::uuid
       ORDER BY created_at DESC
       LIMIT 20
     `, [req.user.id]);
 
-    res.json(result.rows);
+    res.json(result.rows.map(row => ({
+      id: row.id,
+      type: row.type || 'info',
+      message: row.message || row.title || 'Notification',
+      time: new Date(row.created_at).toLocaleDateString(),
+    })));
   } catch (err) {
-    next(err);
+    console.error('Error in getNotifications:', err);
+    res.status(500).json({ error: 'Failed to fetch notifications', details: err.message });
   }
 };
 
