@@ -474,6 +474,20 @@ const dismissNotification = async ({ token, notificationId }) => {
   // This would allow for better cleanup and management
 };
 
+const markNotificationAsRead = async ({ token, notificationId }) => {
+  // Mark notification as read by inserting dismissal record
+  // This effectively marks it as "read" for the user
+  await pool.query(
+    `
+      INSERT INTO app_notification_dismissals (fcm_token, notification_id, dismissed_at)
+      VALUES ($1, $2, NOW())
+      ON CONFLICT (fcm_token, notification_id)
+      DO UPDATE SET dismissed_at = NOW()
+    `,
+    [token, notificationId],
+  );
+};
+
 const getAlertPreference = async ({ token }) => {
   const result = await pool.query(
     `
@@ -736,6 +750,27 @@ const saveHouse = async ({ token, houseId }) => {
   return result.rows[0] || { house_id: houseId };
 };
 
+module.exports = {
+  ensureNotificationTables,
+  saveDeviceToken,
+  listNotifications,
+  dismissNotification,
+  markNotificationAsRead,
+  getAlertPreference,
+  saveAlertPreference,
+  findMatchingAlertTokens,
+  findAllDeviceTokens,
+  findDeviceTokensByRoles,
+  findDeviceTokensByUserId,
+  sendNotificationToRoles,
+  sendNotificationToUser,
+  insertNotificationRecord,
+  deleteInvalidTokens,
+  isHouseSaved,
+  saveHouse,
+  removeSavedHouse,
+};
+
 const removeSavedHouse = async ({ token, houseId }) => {
   await pool.query(
     `
@@ -896,6 +931,7 @@ module.exports = {
   saveDeviceToken,
   listNotifications,
   dismissNotification,
+  markNotificationAsRead,
   getAlertPreference,
   saveAlertPreference,
   isHouseSaved,

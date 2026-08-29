@@ -3,6 +3,7 @@ const {
   getAlertPreference,
   isHouseSaved,
   listNotifications,
+  markNotificationAsRead,
   removeSavedHouse,
   saveAlertPreference,
   saveDeviceToken,
@@ -67,6 +68,36 @@ exports.deleteNotification = async (req, res, next) => {
 
     await dismissNotification({ token, notificationId: Number(notificationId) });
     res.json({ message: 'Notification imefutwa kwenye kifaa hiki.' });
+  } catch (error) {
+    next(error);
+  }
+};
+
+exports.markNotificationAsRead = async (req, res, next) => {
+  try {
+    const { token } = req.query;
+    const { notificationId } = req.params;
+    const userId = req.user?.id;
+    
+    // Support both FCM token and authenticated read marking
+    if (userId) {
+      // Authenticated user - mark as read for this user
+      if (!token || typeof token !== 'string') {
+        return res.status(400).json({ error: 'FCM token inahitajika.' });
+      }
+    } else {
+      // FCM token-based read marking
+      if (!token || typeof token !== 'string') {
+        return res.status(400).json({ error: 'FCM token inahitajika.' });
+      }
+    }
+    
+    if (!notificationId || !Number.isFinite(Number(notificationId))) {
+      return res.status(400).json({ error: 'Notification id si sahihi.' });
+    }
+
+    await dismissNotification({ token, notificationId: Number(notificationId) });
+    res.json({ message: 'Notification imehifadhiwa kama isomwa.' });
   } catch (error) {
     next(error);
   }
