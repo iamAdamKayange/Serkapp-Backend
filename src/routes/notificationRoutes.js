@@ -5,7 +5,7 @@ const {
   getAlertPreference,
   getNotifications,
   getSavedHouseStatus,
-  markNotificationRead,
+  markNotificationAsRead,
   registerDeviceToken,
   removeSavedHouse,
   saveAlertPreference,
@@ -22,6 +22,6 @@ router.get('/saved-houses/:houseId', getSavedHouseStatus);
 router.post('/saved-houses', saveHouse);
 router.delete('/saved-houses/:houseId', removeSavedHouse);
 router.delete('/:notificationId', authMiddleware, deleteNotification);
-router.put('/:notificationId/read', authMiddleware, markNotificationRead);
+router.put('/:notificationId/read', authMiddleware, markNotificationAsRead);
 
 module.exports = router;
