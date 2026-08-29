@@ -768,7 +768,6 @@ module.exports = {
   deleteInvalidTokens,
   isHouseSaved,
   saveHouse,
-  removeSavedHouse,
 };
 
 const removeSavedHouse = async ({ token, houseId }) => {
