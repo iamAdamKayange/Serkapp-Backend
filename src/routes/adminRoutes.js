@@ -35,4 +35,7 @@ router.get('/analytics/verifications', adminMiddleware, adminController.getVerif
 // Admin profile
 router.get('/profile', adminMiddleware, adminController.getAdminProfile);
 
+// Verification queue
+router.get('/verifications/queue', adminMiddleware, adminController.getVerificationQueue);
+
 module.exports = router;
