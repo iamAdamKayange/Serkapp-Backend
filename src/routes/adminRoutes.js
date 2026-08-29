@@ -1,8 +1,11 @@
 const express = require('express');
-const { adminMiddleware } = require('../middleware/auth');
+const { authMiddleware, adminMiddleware } = require('../middleware/auth');
 const adminController = require('../controllers/adminController');
 
 const router = express.Router();
+
+// Apply auth middleware to all admin routes
+router.use(authMiddleware);
 
 // Dashboard stats
 router.get('/dashboard/stats', adminMiddleware, adminController.getDashboardStats);
