@@ -21,24 +21,16 @@ router.get('/notifications', adminMiddleware, adminController.getNotifications);
 
 // Users management
 router.get('/users', adminMiddleware, adminController.getUsers);
+router.post('/users/:userId/ban', adminMiddleware, adminController.banUser);
+router.post('/users/:userId/unban', adminMiddleware, adminController.unbanUser);
 
 // Houses management
 router.get('/houses', adminMiddleware, adminController.getHouses);
-
-// Analytics
-router.get('/analytics', adminMiddleware, (req, res) => {
-  // Combined analytics endpoint
-  res.json({ message: 'Use specific analytics endpoints' });
-});
-
-router.get('/analytics/user-growth', adminMiddleware, adminController.getUserGrowth);
-router.get('/analytics/revenue', adminMiddleware, adminController.getRevenueTrends);
-router.get('/analytics/verifications', adminMiddleware, adminController.getVerificationStats);
-
-// Admin profile
-router.get('/profile', adminMiddleware, adminController.getAdminProfile);
+router.get('/houses/:houseId', adminMiddleware, adminController.getHouseDetails);
 
 // Verification queue
 router.get('/verifications/queue', adminMiddleware, adminController.getVerificationQueue);
+router.post('/verifications/:verificationId/approve', adminMiddleware, adminController.approveVerification);
+router.post('/verifications/:verificationId/reject', adminMiddleware, adminController.rejectVerification);
 
 module.exports = router;

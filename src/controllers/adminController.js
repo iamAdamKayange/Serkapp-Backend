@@ -366,14 +366,19 @@ exports.getUsers = async (req, res, next) => {
 
     res.json(result.rows.map(user => ({
       id: user.id,
-      name: `${user.first_name} ${user.last_name}`.trim(),
       email: user.email,
+      name: `${user.first_name || ''} ${user.last_name || ''}`.trim(),
+      firstName: user.first_name,
+      lastName: user.last_name,
+      phone: user.phone,
       role: user.role,
-      status: 'active', // Default status since we don't have a status field
+      isBanned: false, // Default since column might not exist
+      isVerified: user.verified || false,
       createdAt: user.created_at,
     })));
   } catch (err) {
-    next(err);
+    console.error('Error in getUsers:', err);
+    res.status(500).json({ error: 'Failed to fetch users' });
   }
 };
 
@@ -381,7 +386,7 @@ exports.getUsers = async (req, res, next) => {
 exports.getHouses = async (req, res, next) => {
   try {
     const result = await pool.query(`
-      SELECT h.id, h.title, h.price, h.bedrooms, h.bathrooms, h.location, h.status, h.created_at,
+      SELECT h.id, h.title, h.price, h.bedrooms, h.bathrooms, h.location, h.status, h.created_at, h.images,
              u.first_name, u.last_name, u.email
       FROM houses h
       JOIN users u ON h.landlord_id = u.id
@@ -398,11 +403,64 @@ exports.getHouses = async (req, res, next) => {
       bedrooms: house.bedrooms,
       bathrooms: house.bathrooms,
       status: house.status || 'active',
+      isActive: house.status === 'active',
+      isRented: house.status === 'rented',
+      images: house.images || [],
+      brandName: house.title,
+      type: 'apartment',
+      rent: house.price,
       listedAt: house.created_at,
-      type: 'apartment', // Default type since we might not have this field
     })));
   } catch (err) {
-    next(err);
+    console.error('Error in getHouses:', err);
+    res.status(500).json({ error: 'Failed to fetch houses' });
+  }
+};
+
+// Get house details (admin only)
+exports.getHouseDetails = async (req, res, next) => {
+  try {
+    const { houseId } = req.params;
+    const result = await pool.query(`
+      SELECT h.id, h.title, h.price, h.bedrooms, h.bathrooms, h.location, h.status, h.created_at, h.images,
+             h.description, h.type, h.latitude, h.longitude,
+             u.first_name, u.last_name, u.email, u.phone
+      FROM houses h
+      JOIN users u ON h.landlord_id = u.id
+      WHERE h.id = $1
+    `, [houseId]);
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'House not found' });
+    }
+
+    const house = result.rows[0];
+    res.json({
+      id: house.id,
+      title: house.title,
+      price: parseFloat(house.price),
+      bedrooms: house.bedrooms,
+      bathrooms: house.bathrooms,
+      location: house.location,
+      status: house.status,
+      isActive: house.status === 'active',
+      isRented: house.status === 'rented',
+      images: house.images || [],
+      description: house.description,
+      type: house.type || 'apartment',
+      latitude: house.latitude,
+      longitude: house.longitude,
+      landlord: {
+        firstName: house.first_name,
+        lastName: house.last_name,
+        email: house.email,
+        phone: house.phone,
+      },
+      createdAt: house.created_at,
+    });
+  } catch (err) {
+    console.error('Error in getHouseDetails:', err);
+    res.status(500).json({ error: 'Failed to fetch house details' });
   }
 };
 
@@ -446,5 +504,103 @@ exports.getAdminProfile = async (req, res, next) => {
     res.json(result.rows[0]);
   } catch (err) {
     next(err);
+  }
+};
+
+// Ban user
+exports.banUser = async (req, res, next) => {
+  try {
+    const { userId } = req.params;
+    
+    // Check if is_banned column exists, if not, create it
+    try {
+      await pool.query(`
+        ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT false
+      `);
+    } catch (alterErr) {
+      // Column might already exist, ignore error
+    }
+    
+    await pool.query(`
+      UPDATE users
+      SET is_banned = true
+      WHERE id = $1::uuid
+    `, [userId]);
+
+    res.json({ success: true, message: 'User banned successfully' });
+  } catch (err) {
+    console.error('Error banning user:', err);
+    res.status(500).json({ success: false, error: 'Failed to ban user' });
+  }
+};
+
+// Unban user
+exports.unbanUser = async (req, res, next) => {
+  try {
+    const { userId } = req.params;
+    
+    // Check if is_banned column exists, if not, create it
+    try {
+      await pool.query(`
+        ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT false
+      `);
+    } catch (alterErr) {
+      // Column might already exist, ignore error
+    }
+    
+    await pool.query(`
+      UPDATE users
+      SET is_banned = false
+      WHERE id = $1::uuid
+    `, [userId]);
+
+    res.json({ success: true, message: 'User unbanned successfully' });
+  } catch (err) {
+    console.error('Error unbanning user:', err);
+    res.status(500).json({ success: false, error: 'Failed to unban user' });
+  }
+};
+
+// Approve verification
+exports.approveVerification = async (req, res, next) => {
+  try {
+    const { verificationId } = req.params;
+    
+    await pool.query(`
+      UPDATE landlord_identity_verification
+      SET status = 'verified',
+          reviewed_at = NOW(),
+          reviewed_by = $1::uuid
+      WHERE id = $2
+    `, [req.user.id, verificationId]);
+
+    res.json({ success: true, message: 'Verification approved' });
+  } catch (err) {
+    console.error('Error approving verification:', err);
+    res.status(500).json({ success: false, error: 'Failed to approve verification' });
+  }
+};
+
+// Reject verification
+exports.rejectVerification = async (req, res, next) => {
+  try {
+    const { verificationId } = req.params;
+    const { reason } = req.body;
+    
+    await pool.query(`
+      UPDATE landlord_identity_verification
+      SET status = 'rejected',
+          reviewed_at = NOW(),
+          reviewed_by = $1::uuid,
+          admin_notes = $2
+      WHERE id = $3
+    `, [req.user.id, reason || 'Rejected by admin', verificationId]);
+
+    res.json({ success: true, message: 'Verification rejected' });
+  } catch (err) {
+    console.error('Error rejecting verification:', err);
+    res.status(500).json({ success: false, error: 'Failed to reject verification' });
   }
 };
