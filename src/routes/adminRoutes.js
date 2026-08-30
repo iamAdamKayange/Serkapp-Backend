@@ -12,6 +12,8 @@ router.get('/dashboard/stats', adminMiddleware, adminController.getDashboardStat
 
 // KPI data
 router.get('/dashboard/kpi', adminMiddleware, adminController.getKPIData);
+router.get('/dashboard/user-growth', adminMiddleware, adminController.getUserGrowth);
+router.get('/dashboard/revenue-trends', adminMiddleware, adminController.getRevenueTrends);
 
 // Recent activity
 router.get('/activity/recent', adminMiddleware, adminController.getRecentActivity);

@@ -197,45 +197,78 @@ exports.getRevenueTrends = async (req, res, next) => {
 // Get verification queue
 exports.getVerificationQueue = async (req, res, next) => {
   try {
-    const identityVerifications = await pool.query(`
-      SELECT 
-        liv.id,
-        liv.user_id,
-        liv.status,
-        liv.submitted_at,
-        liv.reviewed_at,
-        liv.nin_number,
-        liv.id_photo_url,
-        liv.selfie_photo_url,
-        liv.id_document_url,
-        u.email,
-        u.first_name,
-        u.last_name,
-        u.phone
-      FROM landlord_identity_verification liv
-      JOIN users u ON liv.user_id = u.id
-      WHERE liv.status = 'pending'
-      ORDER BY liv.submitted_at ASC
-      LIMIT 20
-    `);
+    const [identityVerifications, propertyVerifications] = await Promise.all([
+      pool.query(`
+        SELECT 
+          liv.id,
+          liv.status,
+          liv.submitted_at,
+          u.email,
+          u.first_name,
+          u.last_name,
+          u.phone,
+          liv.identity_document_url,
+          liv.nid_number
+        FROM landlord_identity_verification liv
+        JOIN users u ON liv.user_id = u.id
+        WHERE liv.status = 'pending'
+        ORDER BY liv.submitted_at ASC
+        LIMIT 20
+      `),
+      pool.query(`
+        SELECT 
+          pv.id,
+          pv.status,
+          pv.submitted_at,
+          u.email,
+          u.first_name,
+          u.last_name,
+          h.title as house_title,
+          h.location as house_location,
+          pv.property_document_url
+        FROM landlord_property_verification pv
+        JOIN users u ON pv.user_id = u.id
+        LEFT JOIN houses h ON pv.house_id = h.id
+        WHERE pv.status = 'pending'
+        ORDER BY pv.submitted_at ASC
+        LIMIT 20
+      `),
+    ]);
 
-    res.json(identityVerifications.rows.map(row => ({
-      id: row.id,
-      user_id: row.user_id,
-      full_name: `${row.first_name || ''} ${row.last_name || ''}`.trim(),
-      nin_number: row.nin_number,
-      id_photo_url: row.id_photo_url,
-      selfie_photo_url: row.selfie_photo_url,
-      id_document_url: row.id_document_url,
-      status: row.status,
-      submitted_at: row.submitted_at,
-      reviewed_at: row.reviewed_at,
-      email: row.email,
-      phone: row.phone,
-    })));
+    res.json({
+      identity: identityVerifications.rows.map(row => ({
+        id: row.id,
+        type: 'identity',
+        user: {
+          email: row.email,
+          name: `${row.first_name || ''} ${row.last_name || ''}`.trim(),
+          phone: row.phone,
+        },
+        submittedAt: row.submitted_at,
+        documentUrl: row.identity_document_url,
+        nidNumber: row.nid_number,
+        status: row.status,
+      })),
+      property: propertyVerifications.rows.map(row => ({
+        id: row.id,
+        type: 'property',
+        user: {
+          email: row.email,
+          name: `${row.first_name || ''} ${row.last_name || ''}`.trim(),
+        },
+        house: row.house_title ? {
+          title: row.house_title,
+          location: row.house_location,
+        } : null,
+        submittedAt: row.submitted_at,
+        documentUrl: row.property_document_url,
+        status: row.status,
+      })),
+    });
   } catch (err) {
     console.error('Error in getVerificationQueue:', err);
-    res.json([]);
+    // Return empty data instead of 500 error for frontend compatibility
+    res.json({ identity: [], property: [] });
   }
 };
 
@@ -571,4 +604,3 @@ exports.rejectVerification = async (req, res, next) => {
     res.status(500).json({ success: false, error: 'Failed to reject verification' });
   }
 };
-
