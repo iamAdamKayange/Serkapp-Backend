@@ -197,41 +197,63 @@ exports.getRevenueTrends = async (req, res, next) => {
 // Get verification queue
 exports.getVerificationQueue = async (req, res, next) => {
   try {
+    // Get identity verifications with their corresponding property verifications
     const identityVerifications = await pool.query(`
       SELECT 
-        liv.id,
+        liv.id as identity_id,
         liv.user_id,
-        liv.status,
-        liv.submitted_at,
-        liv.reviewed_at,
+        liv.status as identity_status,
+        liv.submitted_at as identity_submitted_at,
+        liv.reviewed_at as identity_reviewed_at,
         liv.nin_number,
         liv.id_photo_url,
         liv.selfie_photo_url,
         liv.id_document_url,
+        liv.admin_notes as identity_admin_notes,
         u.email,
         u.first_name,
         u.last_name,
-        u.phone
+        u.phone,
+        pv.id as property_id,
+        pv.status as property_status,
+        pv.submitted_at as property_submitted_at,
+        pv.property_document_url,
+        pv.property_photos,
+        pv.address,
+        pv.latitude,
+        pv.longitude
       FROM landlord_identity_verification liv
-      JOIN users u ON liv.user_id = u.id
+    JOIN users u ON liv.user_id = u.id
+    LEFT JOIN landlord_property_verification pv ON liv.user_id = pv.user_id 
       WHERE liv.status = 'pending'
       ORDER BY liv.submitted_at ASC
       LIMIT 20
     `);
 
     res.json(identityVerifications.rows.map(row => ({
-      id: row.id,
+      id: row.identity_id,
       user_id: row.user_id,
       full_name: `${row.first_name || ''} ${row.last_name || ''}`.trim(),
       nin_number: row.nin_number,
       id_photo_url: row.id_photo_url,
       selfie_photo_url: row.selfie_photo_url,
       id_document_url: row.id_document_url,
-      status: row.status,
-      submitted_at: row.submitted_at,
-      reviewed_at: row.reviewed_at,
+      status: row.identity_status,
+      submitted_at: row.identity_submitted_at,
+      reviewed_at: row.identity_reviewed_at,
       email: row.email,
       phone: row.phone,
+      // Property verification data (if exists)
+      property_verification: row.property_id ? {
+        id: row.property_id,
+        status: row.property_status,
+        submitted_at: row.property_submitted_at,
+        property_document_url: row.property_document_url,
+        property_photos: row.property_photos,
+        address: row.address,
+        latitude: row.latitude,
+        longitude: row.longitude,
+      } : null,
     })));
   } catch (err) {
     console.error('Error in getVerificationQueue:', err);

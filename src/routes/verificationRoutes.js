@@ -53,6 +53,17 @@ router.get('/property/pending', adminMiddleware, verificationController.getPendi
 // Admin: Review property verification
 router.put('/property/:verificationId/review', adminMiddleware, verificationController.reviewPropertyVerification);
 
+// ==================== COMBINED VERIFICATION ====================
+
+// Landlord: Submit complete verification (identity + property as single application)
+router.post('/complete', authMiddleware, upload.fields([
+  { name: 'idPhoto', maxCount: 1 },
+  { name: 'selfie', maxCount: 1 },
+  { name: 'idDocument', maxCount: 1 },
+  { name: 'propertyDocument', maxCount: 1 },
+  { name: 'propertyPhotos', maxCount: 10 }
+]), verificationController.submitCompleteVerification);
+
 // ==================== COMBINED VERIFICATION STATUS ====================
 
 // Landlord: Get overall verification status

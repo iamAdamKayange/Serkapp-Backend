@@ -698,6 +698,134 @@ exports.getPendingPropertyVerifications = async (req, res, next) => {
   }
 };
 
+// ==================== COMBINED VERIFICATION ====================
+
+// Submit complete verification (identity + property as single application)
+exports.submitCompleteVerification = async (req, res, next) => {
+  const userId = req.user.id;
+  const { fullName, ninNumber, address, latitude, longitude } = req.body;
+  
+  // Files from multer
+  const idPhoto = req.files?.idPhoto?.[0];
+  const selfie = req.files?.selfie?.[0];
+  const idDocument = req.files?.idDocument?.[0];
+  const propertyDocument = req.files?.propertyDocument?.[0];
+  const propertyPhotos = req.files?.propertyPhotos || [];
+
+  if (!idPhoto || !selfie || !propertyDocument || !propertyPhotos || propertyPhotos.length === 0) {
+    return res.status(400).json({ error: 'All identity and property documents are required' });
+  }
+
+  try {
+    // Check if user already has verification
+    const existingIdentity = await pool.query(
+      'SELECT id, status, submitted_at, review_count, cancel_count FROM landlord_identity_verification WHERE user_id = $1::uuid ORDER BY submitted_at DESC LIMIT 1',
+      [userId]
+    );
+
+    const existingProperty = await pool.query(
+      'SELECT id, status, submitted_at, review_count, cancel_count FROM landlord_property_verification WHERE user_id = $1::uuid ORDER BY submitted_at DESC LIMIT 1',
+      [userId]
+    );
+
+    // Convert buffers to base64 for upload
+    const idPhotoBase64 = idPhoto.buffer.toString('base64');
+    const selfieBase64 = selfie.buffer.toString('base64');
+    const documentBase64 = propertyDocument.buffer.toString('base64');
+    const photoBase64Array = propertyPhotos.map(photo => photo.buffer.toString('base64'));
+
+    // Upload files to Spaces
+    const idPhotoUrl = await uploadToSpaces(
+      idPhoto.buffer,
+      idPhoto.originalname || 'id-photo.jpg',
+      idPhoto.mimetype || 'image/jpeg',
+      FOLDER_TYPES.VERIFICATION_DOCUMENTS
+    );
+    const selfieUrl = await uploadToSpaces(
+      selfie.buffer,
+      selfie.originalname || 'selfie.jpg',
+      selfie.mimetype || 'image/jpeg',
+      FOLDER_TYPES.VERIFICATION_DOCUMENTS
+    );
+    const propertyDocUrl = await uploadToSpaces(
+      propertyDocument.buffer,
+      propertyDocument.originalname || 'property-document.pdf',
+      propertyDocument.mimetype || 'application/pdf',
+      FOLDER_TYPES.VERIFICATION_DOCUMENTS
+    );
+    const propertyPhotoUrls = await Promise.all(
+      propertyPhotos.map(photo => uploadToSpaces(
+        photo.buffer,
+        photo.originalname || 'property-photo.jpg',
+        photo.mimetype || 'image/jpeg',
+        FOLDER_TYPES.VERIFICATION_DOCUMENTS
+      ))
+    );
+
+    let idDocUrl = null;
+    if (idDocument) {
+      idDocUrl = await uploadToSpaces(
+        idDocument.buffer,
+        idDocument.originalname || 'id-document.pdf',
+        idDocument.mimetype || 'application/pdf',
+        FOLDER_TYPES.VERIFICATION_DOCUMENTS
+      );
+    }
+
+    // Insert or update identity verification
+    if (existingIdentity.rows.length > 0) {
+      await pool.query(
+        `UPDATE landlord_identity_verification 
+         SET full_name = $1, nin_number = $2, id_photo_url = $3, selfie_photo_url = $4, id_document_url = $5,
+              status = 'pending', admin_notes = NULL, submitted_at = NOW(), reviewed_at = NULL, reviewed_by = NULL
+         WHERE user_id = $6::uuid`,
+        [fullName, ninNumber, idPhotoUrl, selfieUrl, idDocUrl, userId]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO landlord_identity_verification (user_id, full_name, nin_number, id_photo_url, selfie_photo_url, id_document_url, status, submitted_at, review_count, cancel_count)
+         VALUES ($1::uuid, $2, $3, $4, $5, $6, 'pending', NOW(), 0, 0)`,
+        [userId, fullName, ninNumber, idPhotoUrl, selfieUrl, idDocUrl]
+      );
+    }
+
+    // Insert or update property verification
+    if (existingProperty.rows.length > 0) {
+      await pool.query(
+        `UPDATE landlord_property_verification 
+         SET property_document_url = $1, property_photos = $2, latitude = $3, longitude = $4, address = $5,
+              status = 'pending', admin_notes = NULL, submitted_at = NOW(), reviewed_at = NULL, reviewed_by = NULL
+         WHERE user_id = $6::uuid`,
+        [propertyDocUrl, propertyPhotoUrls, latitude, longitude, address, userId]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO landlord_property_verification (user_id, property_document_url, property_photos, latitude, longitude, address, status, submitted_at, review_count, cancel_count)
+         VALUES ($1::uuid, $2, $3, $4, $5, $6, 'pending', NOW(), 0, 0)`,
+        [userId, propertyDocUrl, propertyPhotoUrls, latitude, longitude, address]
+      );
+    }
+
+    // Notify admin
+    await notifyVerificationUser({
+      userId,
+      type: 'verification_submitted',
+      title: 'New Verification Submitted',
+      body: `${fullName} has submitted a complete verification application`,
+      scope: 'admin',
+      status: 'pending',
+    });
+
+    res.status(201).json({ 
+      success: true, 
+      message: 'Complete verification submitted successfully' 
+    });
+  } catch (err) {
+    console.error('Error submitting complete verification:', err);
+    res.status(500).json({ error: 'Failed to submit verification' });
+  }
+};
+
 // Admin: Review property verification
 exports.reviewPropertyVerification = async (req, res, next) => {
   const { verificationId } = req.params;
