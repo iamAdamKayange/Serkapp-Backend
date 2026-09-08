@@ -1,16 +1,22 @@
 let io;
 
 const initSocket = (server) => {
+  const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [
+    'http://localhost:3000',
+    'http://localhost:4028',
+    'https://serkapp.com',
+    'https://serikadmin.vercel.app',
+  ];
+
   io = require('socket.io')(server, {
     cors: {
-      origin: process.env.SOCKET_CORS_ORIGIN || '*',
-      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'],
+      origin: allowedOrigins,
+      methods: ['GET', 'POST'],
+      credentials: true,
     },
   });
 
   io.on('connection', (socket) => {
-    console.log(`Socket connected: ${socket.id}`);
-
     socket.on('join:landlord', (landlordId) => {
       if (landlordId) socket.join(`landlord:${landlordId}`);
     });
@@ -20,7 +26,7 @@ const initSocket = (server) => {
     });
 
     socket.on('disconnect', (reason) => {
-      console.log(`Socket disconnected: ${socket.id} (${reason})`);
+      // Socket disconnected
     });
   });
 

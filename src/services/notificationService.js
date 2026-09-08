@@ -69,7 +69,7 @@ const ensureNotificationTables = async () => {
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS app_alert_preferences (
-      fcm_token TEXT PRIMARY KEY REFERENCES app_device_tokens(fcm_token) ON DELETE CASCADE,
+      user_id TEXT PRIMARY KEY,
       enabled BOOLEAN NOT NULL DEFAULT FALSE,
       regions TEXT[] NOT NULL DEFAULT '{}',
       districts TEXT[] NOT NULL DEFAULT '{}',
@@ -84,20 +84,20 @@ const ensureNotificationTables = async () => {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS app_saved_houses (
       id BIGSERIAL PRIMARY KEY,
-      fcm_token TEXT NOT NULL REFERENCES app_device_tokens(fcm_token) ON DELETE CASCADE,
+      user_id TEXT NOT NULL,
       house_id TEXT NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE (fcm_token, house_id)
+      UNIQUE (user_id, house_id)
     )
   `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS app_notification_dismissals (
       id BIGSERIAL PRIMARY KEY,
-      fcm_token TEXT NOT NULL REFERENCES app_device_tokens(fcm_token) ON DELETE CASCADE,
+      user_id TEXT NOT NULL,
       notification_id BIGINT NOT NULL REFERENCES app_notifications(id) ON DELETE CASCADE,
       dismissed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      UNIQUE (fcm_token, notification_id)
+      UNIQUE (user_id, notification_id)
     )
   `);
 
@@ -458,37 +458,34 @@ const listNotifications = async ({
   return result.rows;
 };
 
-const dismissNotification = async ({ token, notificationId }) => {
+const dismissNotification = async ({ userId, notificationId }) => {
   // Insert dismissal record to permanently remove notification for this user
   await pool.query(
     `
-      INSERT INTO app_notification_dismissals (fcm_token, notification_id, dismissed_at)
+      INSERT INTO app_notification_dismissals (user_id, notification_id, dismissed_at)
       VALUES ($1, $2, NOW())
-      ON CONFLICT (fcm_token, notification_id)
+      ON CONFLICT (user_id, notification_id)
       DO UPDATE SET dismissed_at = NOW()
     `,
-    [token, notificationId],
+    [userId, notificationId],
   );
-  
-  // Optional: Also add user-specific tracking if user_id is available
-  // This would allow for better cleanup and management
 };
 
-const markNotificationAsRead = async ({ token, notificationId }) => {
+const markNotificationAsRead = async ({ userId, notificationId }) => {
   // Mark notification as read by inserting dismissal record
   // This effectively marks it as "read" for the user
   await pool.query(
     `
-      INSERT INTO app_notification_dismissals (fcm_token, notification_id, dismissed_at)
+      INSERT INTO app_notification_dismissals (user_id, notification_id, dismissed_at)
       VALUES ($1, $2, NOW())
-      ON CONFLICT (fcm_token, notification_id)
+      ON CONFLICT (user_id, notification_id)
       DO UPDATE SET dismissed_at = NOW()
     `,
-    [token, notificationId],
+    [userId, notificationId],
   );
 };
 
-const getAlertPreference = async ({ token }) => {
+const getAlertPreference = async ({ userId }) => {
   const result = await pool.query(
     `
       SELECT
@@ -500,9 +497,9 @@ const getAlertPreference = async ({ token }) => {
         max_rent AS "maxRent",
         updated_at
       FROM app_alert_preferences
-      WHERE fcm_token = $1
+      WHERE user_id = $1
     `,
-    [token],
+    [userId],
   );
 
   return result.rows[0] || {
@@ -516,7 +513,7 @@ const getAlertPreference = async ({ token }) => {
 };
 
 const saveAlertPreference = async ({
-  token,
+  userId,
   enabled,
   regions,
   districts,
@@ -527,7 +524,7 @@ const saveAlertPreference = async ({
   const result = await pool.query(
     `
       INSERT INTO app_alert_preferences (
-        fcm_token,
+        user_id,
         enabled,
         regions,
         districts,
@@ -536,7 +533,7 @@ const saveAlertPreference = async ({
         max_rent
       )
       VALUES ($1, $2, $3, $4, $5, $6, $7)
-      ON CONFLICT (fcm_token)
+      ON CONFLICT (user_id)
       DO UPDATE SET
         enabled = EXCLUDED.enabled,
         regions = EXCLUDED.regions,
@@ -555,7 +552,7 @@ const saveAlertPreference = async ({
         updated_at
     `,
     [
-      token,
+      userId,
       enabled === true,
       normalizeList(regions),
       normalizeList(districts),
@@ -724,28 +721,28 @@ const deleteInvalidTokens = async (invalidTokens = []) => {
   );
 };
 
-const isHouseSaved = async ({ token, houseId }) => {
+const isHouseSaved = async ({ userId, houseId }) => {
   const result = await pool.query(
     `
       SELECT 1
       FROM app_saved_houses
-      WHERE fcm_token = $1 AND house_id = $2
+      WHERE user_id = $1 AND house_id = $2
       LIMIT 1
     `,
-    [token, houseId],
+    [userId, houseId],
   );
   return result.rowCount > 0;
 };
 
-const saveHouse = async ({ token, houseId }) => {
+const saveHouse = async ({ userId, houseId }) => {
   const result = await pool.query(
     `
-      INSERT INTO app_saved_houses (fcm_token, house_id)
+      INSERT INTO app_saved_houses (user_id, house_id)
       VALUES ($1, $2)
-      ON CONFLICT (fcm_token, house_id) DO NOTHING
+      ON CONFLICT (user_id, house_id) DO NOTHING
       RETURNING id, house_id, created_at
     `,
-    [token, houseId],
+    [userId, houseId],
   );
   return result.rows[0] || { house_id: houseId };
 };
@@ -770,13 +767,13 @@ module.exports = {
   saveHouse,
 };
 
-const removeSavedHouse = async ({ token, houseId }) => {
+const removeSavedHouse = async ({ userId, houseId }) => {
   await pool.query(
     `
       DELETE FROM app_saved_houses
-      WHERE fcm_token = $1 AND house_id = $2
+      WHERE user_id = $1 AND house_id = $2
     `,
-    [token, houseId],
+    [userId, houseId],
   );
 };
 
@@ -882,7 +879,7 @@ const createHouseCreatedNotification = async ({
     });
     await deleteInvalidTokens(adminDelivery.invalidTokens);
   } catch (error) {
-    console.error('Failed to send house FCM notification:', error);
+    // Notification send failed - don't expose error details
   }
 
   const stored = await Promise.all([

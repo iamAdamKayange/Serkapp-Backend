@@ -67,7 +67,6 @@ const getKeyFromUrl = (url) => {
 
     return decodeURIComponent(parsedUrl.pathname.replace(/^\/+/, ''));
   } catch (error) {
-    console.error('Invalid Spaces URL:', error.message);
     return null;
   }
 };
@@ -115,7 +114,6 @@ const deleteFromSpaces = async (url) => {
     );
     return true;
   } catch (error) {
-    console.error(`Failed to delete Spaces object ${key}:`, error.message);
     return false;
   }
 };

@@ -135,12 +135,11 @@ exports.createHouse = async (req, res, next) => {
       district,
       houseType: type,
     }).catch((error) => {
-      console.error('Create house notification error:', error);
+      // Notification error - don't fail the request
     });
     res.status(201).json({ message: 'Nyumba imeundwa kikamilifu!', houseId });
   } catch (err) {
     await client.query('ROLLBACK');
-    console.error('Create house error:', err);
     next(err);
   } finally {
     client.release();
@@ -156,8 +155,7 @@ exports.uploadMedia = async (req, res, next) => {
     const results = await uploadMultiple(req.files, FOLDER_TYPES.HOUSE_IMAGES);
     res.status(200).json({ files: results });
   } catch (error) {
-    console.error('Upload error:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 };
 
@@ -175,8 +173,7 @@ exports.uploadThumbnail = async (req, res, next) => {
     );
     res.status(200).json({ url: result.url });
   } catch (error) {
-    console.error('Thumbnail upload error:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 };
 
@@ -241,7 +238,6 @@ exports.getAllHouses = async (req, res, next) => {
     const result = await pool.query(query);
     res.json(result.rows);
   } catch (err) { 
-    console.error('getAllHouses error:', err);
     next(err); 
   }
 };
@@ -303,7 +299,6 @@ exports.getVideoFeed = async (req, res, next) => {
     const result = await pool.query(query);
     res.json(result.rows);
   } catch (err) { 
-    console.error('getVideoFeed error:', err);
     next(err); 
   }
 };
@@ -353,7 +348,6 @@ exports.getHouseById = async (req, res, next) => {
     if (result.rows.length === 0) return res.status(404).json({ error: 'Nyumba haikupatikana' });
     res.json(result.rows[0]);
   } catch (err) { 
-    console.error('getHouseById error:', err);
     next(err); 
   }
 };
@@ -402,7 +396,6 @@ exports.getMyHouses = async (req, res, next) => {
     const result = await pool.query(query, [req.user.id]);
     res.json(result.rows);
   } catch (err) { 
-    console.error('getMyHouses error:', err);
     next(err); 
   }
 };
@@ -479,7 +472,6 @@ exports.updateHouse = async (req, res, next) => {
     });
     res.json({ message: 'Nyumba imebadilishwa', houseId: result.rows[0].id });
   } catch (err) { 
-    console.error('updateHouse error:', err);
     next(err); 
   }
 };
@@ -517,7 +509,6 @@ exports.deleteHouse = async (req, res, next) => {
     res.json({ message: 'Nyumba imefutwa pamoja na faili zake zote DigitalOcean Spaces.' });
   } catch (err) {
     await client.query('ROLLBACK');
-    console.error('deleteHouse error:', err);
     next(err);
   } finally {
     client.release();
@@ -547,7 +538,6 @@ exports.addHouseImage = async (req, res, next) => {
     });
     res.status(201).json({ message: 'Picha imeongezwa', image: result.rows[0] });
   } catch (err) { 
-    console.error('addHouseImage error:', err);
     next(err); 
   }
 };
@@ -582,7 +572,6 @@ exports.addHouseVideo = async (req, res, next) => {
     });
     res.status(201).json({ message: 'Video imeongezwa', video: result.rows[0] });
   } catch (err) { 
-    console.error('addHouseVideo error:', err);
     next(err); 
   }
 };
@@ -608,7 +597,6 @@ exports.deleteHouseImage = async (req, res, next) => {
     });
     res.json({ message: 'Picha imefutwa kwenye database na DigitalOcean Spaces.' });
   } catch (err) { 
-    console.error('deleteHouseImage error:', err);
     next(err); 
   }
 };
@@ -636,7 +624,6 @@ exports.deleteHouseVideo = async (req, res, next) => {
     });
     res.json({ message: 'Video imefutwa kwenye database na DigitalOcean Spaces.' });
   } catch (err) { 
-    console.error('deleteHouseVideo error:', err);
     next(err); 
   }
 };

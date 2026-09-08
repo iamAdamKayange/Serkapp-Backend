@@ -240,7 +240,6 @@ exports.submitIdentityVerification = async (req, res, next) => {
 
     res.status(201).json({ message: 'Identity verification submitted successfully' });
   } catch (err) {
-    console.error('Submit identity verification error:', err);
     next(err);
   }
 };
@@ -537,7 +536,6 @@ exports.submitPropertyVerification = async (req, res, next) => {
 
     res.status(201).json({ message: 'Property verification submitted successfully' });
   } catch (err) {
-    console.error('Submit property verification error:', err);
     next(err);
   }
 };
@@ -821,7 +819,6 @@ exports.submitCompleteVerification = async (req, res, next) => {
       message: 'Complete verification submitted successfully' 
     });
   } catch (err) {
-    console.error('Error submitting complete verification:', err);
     res.status(500).json({ error: 'Failed to submit verification' });
   }
 };

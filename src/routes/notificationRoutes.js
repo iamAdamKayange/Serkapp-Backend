@@ -6,7 +6,6 @@ const {
   getNotifications,
   getSavedHouseStatus,
   markNotificationAsRead,
-  registerDeviceToken,
   removeSavedHouse,
   saveAlertPreference,
   saveHouse,
@@ -14,13 +13,13 @@ const {
 
 const router = express.Router();
 
-router.get('/', getNotifications);
+// All notification routes should be protected
+router.get('/', authMiddleware, getNotifications);
 router.get('/preferences', authMiddleware, getAlertPreference);
 router.put('/preferences', authMiddleware, saveAlertPreference);
-router.post('/devices', registerDeviceToken);
-router.get('/saved-houses/:houseId', getSavedHouseStatus);
-router.post('/saved-houses', saveHouse);
-router.delete('/saved-houses/:houseId', removeSavedHouse);
+router.get('/saved-houses/:houseId', authMiddleware, getSavedHouseStatus);
+router.post('/saved-houses', authMiddleware, saveHouse);
+router.delete('/saved-houses/:houseId', authMiddleware, removeSavedHouse);
 router.delete('/:notificationId', authMiddleware, deleteNotification);
 router.put('/:notificationId/read', authMiddleware, markNotificationAsRead);
 

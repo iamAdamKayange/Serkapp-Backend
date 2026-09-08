@@ -29,7 +29,7 @@ router.get('/:id', getHouseById);
 // ======================
 // PROTECTED ROUTES (zinahitaji uthibitishaji na ruhusa za landlord)
 // ======================
-router.post('/upload-media', authMiddleware, landlordOnly, upload.array('files', 20), uploadMedia);
+router.post('/upload-media', authMiddleware, landlordOnly, upload.array('files', 10), uploadMedia);
 router.post('/upload-thumbnail', authMiddleware, landlordOnly, upload.single('thumbnail'), uploadThumbnail); // NEW
 router.post('/', authMiddleware, landlordOnly, createHouse);
 router.get('/landlord/my-houses', authMiddleware, landlordOnly, getMyHouses);

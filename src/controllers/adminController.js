@@ -256,7 +256,6 @@ exports.getVerificationQueue = async (req, res, next) => {
       } : null,
     })));
   } catch (err) {
-    console.error('Error in getVerificationQueue:', err);
     res.json([]);
   }
 };
@@ -338,7 +337,6 @@ exports.getRecentActivity = async (req, res, next) => {
       })),
     });
   } catch (err) {
-    console.error('Error in getRecentActivity:', err);
     // Return empty data instead of 500 error for frontend compatibility
     res.json({ users: [], houses: [], verifications: [] });
   }
@@ -366,7 +364,6 @@ exports.getUsers = async (req, res, next) => {
       createdAt: user.created_at,
     })));
   } catch (err) {
-    console.error('Error in getUsers:', err);
     res.status(500).json({ error: 'Failed to fetch users' });
   }
 };
@@ -401,7 +398,6 @@ exports.getHouses = async (req, res, next) => {
       listedAt: house.created_at,
     })));
   } catch (err) {
-    console.error('Error in getHouses:', err);
     res.status(500).json({ error: 'Failed to fetch houses' });
   }
 };
@@ -448,7 +444,6 @@ exports.getHouseDetails = async (req, res, next) => {
       createdAt: house.created_at,
     });
   } catch (err) {
-    console.error('Error in getHouseDetails:', err);
     res.status(500).json({ error: 'Failed to fetch house details' });
   }
 };
@@ -471,7 +466,6 @@ exports.getNotifications = async (req, res, next) => {
       time: new Date(row.created_at).toLocaleDateString(),
     })));
   } catch (err) {
-    console.error('Error in getNotifications:', err);
     // Return empty array instead of 500 error for frontend compatibility
     res.json([]);
   }
@@ -519,7 +513,6 @@ exports.banUser = async (req, res, next) => {
 
     res.json({ success: true, message: 'User banned successfully' });
   } catch (err) {
-    console.error('Error banning user:', err);
     res.status(500).json({ success: false, error: 'Failed to ban user' });
   }
 };
@@ -547,7 +540,6 @@ exports.unbanUser = async (req, res, next) => {
 
     res.json({ success: true, message: 'User unbanned successfully' });
   } catch (err) {
-    console.error('Error unbanning user:', err);
     res.status(500).json({ success: false, error: 'Failed to unban user' });
   }
 };
@@ -567,7 +559,6 @@ exports.approveVerification = async (req, res, next) => {
 
     res.json({ success: true, message: 'Verification approved' });
   } catch (err) {
-    console.error('Error approving verification:', err);
     res.status(500).json({ success: false, error: 'Failed to approve verification' });
   }
 };
@@ -589,7 +580,6 @@ exports.rejectVerification = async (req, res, next) => {
 
     res.json({ success: true, message: 'Verification rejected' });
   } catch (err) {
-    console.error('Error rejecting verification:', err);
     res.status(500).json({ success: false, error: 'Failed to reject verification' });
   }
 };

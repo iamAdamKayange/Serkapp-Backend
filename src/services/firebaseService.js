@@ -58,13 +58,8 @@ const initFirebaseAdmin = () => {
       });
     }
     initialized = true;
-    console.log('Firebase Admin initialized');
     return true;
   } catch (error) {
-    console.warn(
-      'Firebase Admin not initialized. Set FIREBASE_SERVICE_ACCOUNT_JSON, FIREBASE_SERVICE_ACCOUNT_BASE64, or GOOGLE_APPLICATION_CREDENTIALS to enable FCM.',
-    );
-    console.warn(error.message);
     return false;
   }
 };

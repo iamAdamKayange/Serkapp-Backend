@@ -95,7 +95,6 @@ exports.getVideoComments = async (req, res, next) => {
 
     res.json(commentsWithReplies);
   } catch (err) {
-    console.error('❌ getVideoComments error:', err);
     res.json([]);
   }
 };
@@ -166,7 +165,6 @@ exports.getHouseComments = async (req, res, next) => {
 
     res.json(commentsWithReplies);
   } catch (err) {
-    console.error('❌ getHouseComments error:', err);
     res.json([]);
   }
 };
@@ -257,8 +255,7 @@ exports.createComment = async (req, res, next) => {
 
     res.status(201).json(response);
   } catch (err) {
-    console.error('❌ createComment error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 };
 
@@ -293,8 +290,7 @@ exports.deleteComment = async (req, res, next) => {
     });
     res.json({ message: 'Comment imefutwa kikamilifu' });
   } catch (err) {
-    console.error('❌ deleteComment error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 };
 
@@ -373,8 +369,7 @@ exports.toggleCommentLike = async (req, res, next) => {
       res.json(response);
     }
   } catch (err) {
-    console.error('❌ toggleCommentLike error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 };
 
@@ -461,8 +456,7 @@ exports.toggleVideoLike = async (req, res, next) => {
       res.json(response);
     }
   } catch (err) {
-    console.error('❌ toggleVideoLike error:', err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Internal server error' });
   }
 };
 
@@ -517,7 +511,6 @@ exports.getVideoLikeStatus = async (req, res, next) => {
 
     res.json({ likes_count: likesCount, is_liked: isLiked });
   } catch (err) {
-    console.error('❌ getVideoLikeStatus error:', err);
     res.json({ likes_count: 0, is_liked: false });
   }
 };

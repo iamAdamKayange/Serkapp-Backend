@@ -1,13 +1,9 @@
 const express = require('express');
-const multer = require('multer');
 const { authMiddleware, adminMiddleware } = require('../middleware/auth');
+const { upload } = require('../middleware/upload');
 const router = express.Router();
 
 const verificationController = require('../controllers/verificationController');
-
-// Configure multer for file uploads
-const storage = multer.memoryStorage();
-const upload = multer({ storage: storage });
 
 // ==================== IDENTITY VERIFICATION ====================
 
@@ -16,7 +12,7 @@ router.post('/identity', authMiddleware, upload.fields([
   { name: 'idPhoto', maxCount: 1 },
   { name: 'selfie', maxCount: 1 },
   { name: 'idDocument', maxCount: 1 } // PDF/DOC support
-]), verificationController.submitIdentityVerification);
+], 3), verificationController.submitIdentityVerification);
 
 // Landlord: Get identity verification status
 router.get('/identity/status', authMiddleware, verificationController.getIdentityVerificationStatus);
@@ -36,7 +32,7 @@ router.put('/identity/:verificationId/review', adminMiddleware, verificationCont
 router.post('/property', authMiddleware, upload.fields([
   { name: 'propertyDocument', maxCount: 1 },
   { name: 'propertyPhotos', maxCount: 10 }
-]), verificationController.submitPropertyVerification);
+], 11), verificationController.submitPropertyVerification);
 
 // Landlord: Get property verification status
 router.get('/property/status', authMiddleware, verificationController.getPropertyVerificationStatus);
@@ -62,7 +58,7 @@ router.post('/complete', authMiddleware, upload.fields([
   { name: 'idDocument', maxCount: 1 },
   { name: 'propertyDocument', maxCount: 1 },
   { name: 'propertyPhotos', maxCount: 10 }
-]), verificationController.submitCompleteVerification);
+], 14), verificationController.submitCompleteVerification);
 
 // ==================== COMBINED VERIFICATION STATUS ====================
 

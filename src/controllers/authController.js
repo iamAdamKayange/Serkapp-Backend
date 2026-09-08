@@ -314,7 +314,6 @@ exports.deleteAccount = async (req, res, next) => {
     });
   } catch (err) {
     await client.query('ROLLBACK');
-    console.error('Delete account error:', err);
     next(err);
   } finally {
     client.release();

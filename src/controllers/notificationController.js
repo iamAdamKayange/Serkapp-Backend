@@ -6,33 +6,23 @@ const {
   markNotificationAsRead,
   removeSavedHouse,
   saveAlertPreference,
-  saveDeviceToken,
   saveHouse,
 } = require('../services/notificationService');
-const jwt = require('jsonwebtoken');
-
-const optionalUserId = (req) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader?.startsWith('Bearer ')) return null;
-
-  try {
-    const token = authHeader.slice('Bearer '.length).trim();
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    return decoded.id || null;
-  } catch (_) {
-    return null;
-  }
-};
 
 exports.getNotifications = async (req, res, next) => {
   try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
     const userRole = req.user?.role || null;
     const notifications = await listNotifications({
       limit: req.query.limit,
       before: req.query.before,
       token: req.query.token,
       installCutoffAt: req.query.installCutoffAt,
-      userId: req.user?.id,
+      userId: userId,
       userRole: userRole,
     });
     res.json(notifications);
@@ -43,31 +33,20 @@ exports.getNotifications = async (req, res, next) => {
 
 exports.deleteNotification = async (req, res, next) => {
   try {
-    const { token } = req.query;
     const { notificationId } = req.params;
     const userId = req.user?.id;
     
-    // Support both FCM token and authenticated deletion
-    if (userId) {
-      // Authenticated user deletion - delete notification for this user
-      // This would require a different service call for user-specific notifications
-      // For now, we'll try the FCM token approach as fallback
-      if (!token || typeof token !== 'string') {
-        return res.status(400).json({ error: 'FCM token inahitajika.' });
-      }
-    } else {
-      // FCM token-based deletion
-      if (!token || typeof token !== 'string') {
-        return res.status(400).json({ error: 'FCM token inahitajika.' });
-      }
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required' });
     }
     
     if (!notificationId || !Number.isFinite(Number(notificationId))) {
       return res.status(400).json({ error: 'Notification id si sahihi.' });
     }
 
-    await dismissNotification({ token, notificationId: Number(notificationId) });
-    res.json({ message: 'Notification imefutwa kwenye kifaa hiki.' });
+    // User-specific notification deletion
+    await dismissNotification({ userId, notificationId: Number(notificationId) });
+    res.json({ message: 'Notification imefutwa.' });
   } catch (error) {
     next(error);
   }
@@ -75,28 +54,19 @@ exports.deleteNotification = async (req, res, next) => {
 
 exports.markNotificationAsRead = async (req, res, next) => {
   try {
-    const { token } = req.query;
     const { notificationId } = req.params;
     const userId = req.user?.id;
     
-    // Support both FCM token and authenticated read marking
-    if (userId) {
-      // Authenticated user - mark as read for this user
-      if (!token || typeof token !== 'string') {
-        return res.status(400).json({ error: 'FCM token inahitajika.' });
-      }
-    } else {
-      // FCM token-based read marking
-      if (!token || typeof token !== 'string') {
-        return res.status(400).json({ error: 'FCM token inahitajika.' });
-      }
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required' });
     }
     
     if (!notificationId || !Number.isFinite(Number(notificationId))) {
       return res.status(400).json({ error: 'Notification id si sahihi.' });
     }
 
-    await dismissNotification({ token, notificationId: Number(notificationId) });
+    // User-specific notification read marking
+    await dismissNotification({ userId, notificationId: Number(notificationId) });
     res.json({ message: 'Notification imehifadhiwa kama isomwa.' });
   } catch (error) {
     next(error);
@@ -105,17 +75,12 @@ exports.markNotificationAsRead = async (req, res, next) => {
 
 exports.getAlertPreference = async (req, res, next) => {
   try {
-    const token = req.query.token;
-    if (!token || typeof token !== 'string') {
-      return res.status(400).json({ error: 'FCM token inahitajika.' });
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required' });
     }
 
-    await saveDeviceToken({
-      token,
-      platform: req.query.platform,
-      userId: req.user.id,
-    });
-    const preference = await getAlertPreference({ token });
+    const preference = await getAlertPreference({ userId });
     res.json(preference);
   } catch (error) {
     next(error);
@@ -124,8 +89,12 @@ exports.getAlertPreference = async (req, res, next) => {
 
 exports.saveAlertPreference = async (req, res, next) => {
   try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
     const {
-      token,
       enabled,
       regions,
       districts,
@@ -134,18 +103,8 @@ exports.saveAlertPreference = async (req, res, next) => {
       maxRent,
     } = req.body;
 
-    if (!token || typeof token !== 'string') {
-      return res.status(400).json({ error: 'FCM token inahitajika.' });
-    }
-
-    await saveDeviceToken({
-      token,
-      platform: req.body.platform,
-      appVersion: req.body.appVersion,
-      userId: req.user.id,
-    });
     const preference = await saveAlertPreference({
-      token,
+      userId,
       enabled,
       regions,
       districts,
@@ -163,34 +122,15 @@ exports.saveAlertPreference = async (req, res, next) => {
   }
 };
 
-exports.registerDeviceToken = async (req, res, next) => {
-  try {
-    const { token, platform, appVersion, installCutoffAt } = req.body;
-    if (!token || typeof token !== 'string') {
-      return res.status(400).json({ error: 'FCM token inahitajika.' });
-    }
-
-    const saved = await saveDeviceToken({
-      token,
-      platform,
-      appVersion,
-      installCutoffAt,
-      userId: optionalUserId(req),
-    });
-    res.status(201).json({ message: 'Device token imehifadhiwa.', id: saved.id });
-  } catch (error) {
-    next(error);
-  }
-};
-
 exports.getSavedHouseStatus = async (req, res, next) => {
   try {
-    const { token } = req.query;
-    const { houseId } = req.params;
-    if (!token || typeof token !== 'string') {
-      return res.status(400).json({ error: 'FCM token inahitajika.' });
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required' });
     }
-    const saved = await isHouseSaved({ token, houseId });
+
+    const { houseId } = req.params;
+    const saved = await isHouseSaved({ userId, houseId });
     res.json({ saved });
   } catch (error) {
     next(error);
@@ -199,11 +139,16 @@ exports.getSavedHouseStatus = async (req, res, next) => {
 
 exports.saveHouse = async (req, res, next) => {
   try {
-    const { token, houseId } = req.body;
-    if (!token || typeof token !== 'string' || !houseId) {
-      return res.status(400).json({ error: 'Token na houseId zinahitajika.' });
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required' });
     }
-    const saved = await saveHouse({ token, houseId: String(houseId) });
+
+    const { houseId } = req.body;
+    if (!houseId) {
+      return res.status(400).json({ error: 'HouseId inahitajika.' });
+    }
+    const saved = await saveHouse({ userId, houseId: String(houseId) });
     res.status(201).json({ message: 'Nyumba imehifadhiwa.', saved });
   } catch (error) {
     next(error);
@@ -212,12 +157,13 @@ exports.saveHouse = async (req, res, next) => {
 
 exports.removeSavedHouse = async (req, res, next) => {
   try {
-    const { token } = req.query;
-    const { houseId } = req.params;
-    if (!token || typeof token !== 'string') {
-      return res.status(400).json({ error: 'FCM token inahitajika.' });
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ error: 'Authentication required' });
     }
-    await removeSavedHouse({ token, houseId });
+
+    const { houseId } = req.params;
+    await removeSavedHouse({ userId, houseId });
     res.json({ message: 'Nyumba imeondolewa kwenye saved.' });
   } catch (error) {
     next(error);
