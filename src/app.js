@@ -51,6 +51,7 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || [
   'https://serkapp.com',
   'https://serikadmin.vercel.app',
   'https://serik-admin-git-main-adam-kayange.vercel.app',
+  'https://serik-admin.vercel.app',
 ];
 
 app.use(cors({
@@ -58,7 +59,8 @@ app.use(cors({
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
     
-    if (allowedOrigins.indexOf(origin) !== -1) {
+    // Check if origin is in allowed list or is a Vercel subdomain
+    if (allowedOrigins.indexOf(origin) !== -1 || origin.endsWith('.vercel.app')) {
       callback(null, true);
     } else {
       callback(new Error('Not allowed by CORS'));
