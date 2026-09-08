@@ -61,4 +61,45 @@ const validateLogin = (req, res, next) => {
   next();
 };
 
-module.exports = { validateRegister, validateLogin };
+const validatePasswordReset = (req, res, next) => {
+  const schema = Joi.object({
+    email: Joi.string().email().lowercase().trim().required(),
+    resetToken: Joi.string().min(32).required(),
+    newPassword: Joi.string().min(8).pattern(/^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)/).required(),
+  });
+  const { value, error } = schema.validate(req.body, { 
+    stripUnknown: true,
+    abortEarly: false 
+  });
+  if (error) {
+    const errors = error.details.map(detail => detail.message);
+    return res.status(400).json({ 
+      error: 'Validation failed', 
+      details: errors 
+    });
+  }
+  req.body = value;
+  next();
+};
+
+const validatePasswordChange = (req, res, next) => {
+  const schema = Joi.object({
+    currentPassword: Joi.string().required(),
+    newPassword: Joi.string().min(8).pattern(/^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)/).required(),
+  });
+  const { value, error } = schema.validate(req.body, { 
+    stripUnknown: true,
+    abortEarly: false 
+  });
+  if (error) {
+    const errors = error.details.map(detail => detail.message);
+    return res.status(400).json({ 
+      error: 'Validation failed', 
+      details: errors 
+    });
+  }
+  req.body = value;
+  next();
+};
+
+module.exports = { validateRegister, validateLogin, validatePasswordReset, validatePasswordChange };

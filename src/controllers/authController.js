@@ -2,6 +2,33 @@ const bcrypt = require('bcryptjs');
 const pool = require('../config/db');
 const generateToken = require('../utils/generateToken');
 const { uploadToSpaces, FOLDER_TYPES, deleteFromSpaces } = require('../services/imageUploadService');
+const { 
+  trackFailedLogin, 
+  isAccountLocked, 
+  clearFailedLoginAttempts,
+  trackPasswordChange,
+  trackPasswordResetRequest,
+  trackPasswordResetComplete,
+  ACCOUNT_LOCKOUT_DURATION_MS
+} = require('../services/securityEventService');
+const {
+  AuditEventTypes,
+  RiskLevels,
+  LockReasons,
+  initializeSecurityTables,
+  logSecurityEvent,
+  getAccountSecurity,
+  lockAccount,
+  unlockAccount,
+  updateFailedLoginCount,
+  updateRiskLevel,
+  isAccountLockedDB
+} = require('../services/auditLogService');
+const {
+  trackUserActivity,
+  assessUserRisk,
+  detectSuspiciousActivityDB
+} = require('../services/riskDetectionService');
 
 const ensureUserProfileColumns = async () => {
   await pool.query(`
@@ -74,20 +101,194 @@ exports.register = async (req, res, next) => {
 // @route POST /api/auth/login
 exports.login = async (req, res, next) => {
   const { email, password } = req.body;
+  const ip = req.ip || req.connection.remoteAddress;
+  const userAgent = req.headers['user-agent'];
+  const requestId = req.id || Math.random().toString(36).substring(7);
+  
   try {
     await ensureUserProfileColumns();
+    
+    // Initialize security tables if needed
+    await initializeSecurityTables();
+    
     const result = await pool.query(
-      `SELECT id, email, password_hash, first_name, last_name, phone, role, profile_image_url FROM users WHERE email = $1`,
+      `SELECT id, email, password_hash, first_name, last_name, phone, role, profile_image_url, is_banned FROM users WHERE email = $1`,
       [email]
     );
+    
     if (result.rows.length === 0) {
+      // Track failed login for non-existent email (in-memory only)
+      await trackFailedLogin(email, ip);
+      
+      // Log security event (without user_id since user doesn't exist)
+      await logSecurityEvent({
+        eventType: AuditEventTypes.LOGIN_FAILED,
+        riskLevel: RiskLevels.NORMAL,
+        ipAddress: ip,
+        userAgent: userAgent,
+        endpoint: '/api/auth/login',
+        requestId: requestId,
+        details: { email: email }
+      });
+      
       return res.status(401).json({ error: 'Invalid email or password' });
     }
+    
     const user = result.rows[0];
+    
+    // Check database-backed lock status
+    const dbLockStatus = await isAccountLockedDB(user.id);
+    if (dbLockStatus.locked) {
+      await logSecurityEvent({
+        userId: user.id,
+        eventType: AuditEventTypes.LOGIN_FAILED,
+        riskLevel: RiskLevels.HIGH_RISK,
+        ipAddress: ip,
+        userAgent: userAgent,
+        endpoint: '/api/auth/login',
+        requestId: requestId,
+        details: { 
+          reason: 'Account locked',
+          lockReason: dbLockStatus.lockReason,
+          lockedUntil: dbLockStatus.lockedUntil
+        }
+      });
+      
+      return res.status(423).json({ 
+        error: 'Account is locked',
+        lockReason: dbLockStatus.lockReason,
+        lockUntil: dbLockStatus.lockedUntil
+      });
+    }
+    
+    // Check in-memory lock status as backup
+    const lockStatus = isAccountLocked(email);
+    if (lockStatus.locked) {
+      await logSecurityEvent({
+        userId: user.id,
+        eventType: AuditEventTypes.LOGIN_FAILED,
+        riskLevel: RiskLevels.HIGH_RISK,
+        ipAddress: ip,
+        userAgent: userAgent,
+        endpoint: '/api/auth/login',
+        requestId: requestId,
+        details: { reason: 'Account temporarily locked' }
+      });
+      
+      return res.status(423).json({ 
+        error: 'Account temporarily locked due to too many failed login attempts',
+        lockUntil: lockStatus.lockUntil,
+        remainingMinutes: lockStatus.remainingMinutes
+      });
+    }
+    
+    // Check if user is banned
+    if (user.is_banned) {
+      await trackAccountBan(user.id, email, 'Account is banned');
+      await logSecurityEvent({
+        userId: user.id,
+        eventType: AuditEventTypes.LOGIN_FAILED,
+        riskLevel: RiskLevels.HIGH_RISK,
+        ipAddress: ip,
+        userAgent: userAgent,
+        endpoint: '/api/auth/login',
+        requestId: requestId,
+        details: { reason: 'Account is banned' }
+      });
+      
+      return res.status(403).json({ error: 'Account is suspended' });
+    }
+    
     const isMatch = await bcrypt.compare(password, user.password_hash);
     if (!isMatch) {
+      // Track failed login in-memory
+      const securityResult = await trackFailedLogin(email, ip, user.id);
+      
+      // Track in risk detection service
+      trackUserActivity(user.id, 'FAILED_LOGIN');
+      
+      // Update database failed login count
+      await updateFailedLoginCount(user.id, true);
+      
+      // Log security event
+      await logSecurityEvent({
+        userId: user.id,
+        eventType: AuditEventTypes.LOGIN_FAILED,
+        riskLevel: RiskLevels.SUSPICIOUS,
+        ipAddress: ip,
+        userAgent: userAgent,
+        endpoint: '/api/auth/login',
+        requestId: requestId,
+        details: { 
+          attemptCount: securityResult.attemptCount,
+          threshold: 5
+        }
+      });
+      
+      // Assess risk level
+      const riskAssessment = assessUserRisk(user.id);
+      if (riskAssessment.riskLevel !== RiskLevels.NORMAL) {
+        await updateRiskLevel(user.id, riskAssessment.riskLevel);
+      }
+      
+      if (securityResult.locked) {
+        // Account is now locked - lock in database
+        await lockAccount(user.id, LockReasons.FAILED_LOGIN, null, securityResult.lockUntil);
+        await trackAccountLockout(user.id, email, securityResult.lockUntil);
+        
+        await logSecurityEvent({
+          userId: user.id,
+          eventType: AuditEventTypes.ACCOUNT_LOCKED,
+          riskLevel: RiskLevels.HIGH_RISK,
+          ipAddress: ip,
+          userAgent: userAgent,
+          endpoint: '/api/auth/login',
+          requestId: requestId,
+          details: { 
+            reason: LockReasons.FAILED_LOGIN,
+            lockUntil: securityResult.lockUntil,
+            attemptCount: securityResult.attemptCount
+          }
+        });
+        
+        return res.status(423).json({ 
+          error: 'Account temporarily locked due to too many failed login attempts',
+          lockUntil: securityResult.lockUntil,
+          remainingMinutes: Math.ceil(ACCOUNT_LOCKOUT_DURATION_MS / 60000)
+        });
+      }
+      
       return res.status(401).json({ error: 'Invalid email or password' });
     }
+    
+    // Successful login - clear failed attempts
+    clearFailedLoginAttempts(email);
+    await updateFailedLoginCount(user.id, false);
+    
+    // Reset risk level to NORMAL on successful login
+    await updateRiskLevel(user.id, RiskLevels.NORMAL);
+    
+    // Update last successful login in database
+    await pool.query(
+      `UPDATE account_security 
+       SET last_successful_login_at = NOW(),
+           updated_at = NOW()
+       WHERE user_id = $1::uuid`,
+      [user.id]
+    );
+    
+    // Log successful login
+    await logSecurityEvent({
+      userId: user.id,
+      eventType: AuditEventTypes.LOGIN_SUCCESS,
+      riskLevel: RiskLevels.NORMAL,
+      ipAddress: ip,
+      userAgent: userAgent,
+      endpoint: '/api/auth/login',
+      requestId: requestId,
+      details: { email: user.email }
+    });
+    
     const token = generateToken(user);
     res.json({
       message: 'Login successful',
@@ -317,5 +518,184 @@ exports.deleteAccount = async (req, res, next) => {
     next(err);
   } finally {
     client.release();
+  }
+};
+
+// @route POST /api/auth/password-reset/request
+exports.requestPasswordReset = async (req, res, next) => {
+  const { email } = req.body;
+  
+  try {
+    await ensureUserProfileColumns();
+    
+    // Check if user exists
+    const result = await pool.query(
+      'SELECT id, email, first_name, last_name FROM users WHERE email = $1',
+      [email]
+    );
+    
+    if (result.rows.length === 0) {
+      // Don't reveal user existence, but don't send email
+      return res.json({ 
+        message: 'If an account exists with this email, a password reset link will be sent.' 
+      });
+    }
+    
+    const user = result.rows[0];
+    
+    // Track password reset request
+    await trackPasswordResetRequest(user.id, email);
+    
+    // In a real implementation, you would generate a reset token and send it via email
+    // For now, we'll simulate this by acknowledging the request
+    
+    res.json({ 
+      message: 'If an account exists with this email, a password reset link will be sent.' 
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// @route POST /api/auth/password-reset/confirm
+exports.resetPassword = async (req, res, next) => {
+  const { email, newPassword, resetToken } = req.body;
+  
+  try {
+    await ensureUserProfileColumns();
+    
+    // Validate reset token (in real implementation, this would be cryptographically verified)
+    if (!resetToken || resetToken.length < 32) {
+      return res.status(400).json({ error: 'Invalid reset token' });
+    }
+    
+    // Find user by email
+    const result = await pool.query(
+      'SELECT id, email, first_name, last_name FROM users WHERE email = $1',
+      [email]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const user = result.rows[0];
+    
+    // Validate new password
+    const passwordRegex = /^(?=.*[A-Z])(?=.*[a-z])(?=.*\d).{8,}$/;
+    if (!passwordRegex.test(newPassword)) {
+      return res.status(400).json({ 
+        error: 'Password must be at least 8 characters with uppercase, lowercase, and numbers' 
+      });
+    }
+    
+    // Hash new password
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(newPassword, salt);
+    
+    // Update password
+    await pool.query(
+      'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2::uuid',
+      [passwordHash, user.id]
+    );
+    
+    // Track password reset completion
+    await trackPasswordResetComplete(user.id, email);
+    
+    // Clear all failed login attempts for this user
+    clearFailedLoginAttempts(email);
+    
+    res.json({ 
+      message: 'Password has been reset successfully. You can now log in with your new password.' 
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// @route POST /api/auth/change-password
+exports.changePassword = async (req, res, next) => {
+  const { currentPassword, newPassword } = req.body;
+  const userId = req.user.id;
+  const deviceInfo = req.headers['user-agent'] || 'Unknown device';
+  const ip = req.ip || req.connection.remoteAddress;
+  const requestId = req.id || Math.random().toString(36).substring(7);
+  
+  try {
+    await ensureUserProfileColumns();
+    
+    // Get current user data
+    const result = await pool.query(
+      'SELECT id, email, password_hash, first_name, last_name FROM users WHERE id = $1::uuid',
+      [userId]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const user = result.rows[0];
+    
+    // Verify current password
+    const isMatch = await bcrypt.compare(currentPassword, user.password_hash);
+    if (!isMatch) {
+      await logSecurityEvent({
+        userId: userId,
+        eventType: AuditEventTypes.UNAUTHORIZED_ACCESS_ATTEMPT,
+        riskLevel: RiskLevels.SUSPICIOUS,
+        ipAddress: ip,
+        userAgent: deviceInfo,
+        endpoint: '/api/auth/change-password',
+        requestId: requestId,
+        details: { reason: 'Incorrect current password' }
+      });
+      
+      return res.status(401).json({ error: 'Current password is incorrect' });
+    }
+    
+    // Validate new password
+    const passwordRegex = /^(?=.*[A-Z])(?=.*[a-z])(?=.*\d).{8,}$/;
+    if (!passwordRegex.test(newPassword)) {
+      return res.status(400).json({ 
+        error: 'Password must be at least 8 characters with uppercase, lowercase, and numbers' 
+      });
+    }
+    
+    // Check if new password is same as current
+    const isSamePassword = await bcrypt.compare(newPassword, user.password_hash);
+    if (isSamePassword) {
+      return res.status(400).json({ error: 'New password must be different from current password' });
+    }
+    
+    // Hash new password
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(newPassword, salt);
+    
+    // Update password
+    await pool.query(
+      'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2::uuid',
+      [passwordHash, userId]
+    );
+    
+    // Track password change
+    await trackPasswordChange(userId, user.email, deviceInfo);
+    
+    // Log security event
+    await logSecurityEvent({
+      userId: userId,
+      eventType: AuditEventTypes.PASSWORD_CHANGED,
+      riskLevel: RiskLevels.NORMAL,
+      ipAddress: ip,
+      userAgent: deviceInfo,
+      endpoint: '/api/auth/change-password',
+      requestId: requestId,
+      details: { deviceInfo: deviceInfo }
+    });
+    
+    res.json({ 
+      message: 'Password changed successfully. You will receive a security notification email.' 
+    });
+  } catch (err) {
+    next(err);
   }
 };

@@ -4,8 +4,11 @@ const adminController = require('../controllers/adminController');
 
 const router = express.Router();
 
-// Apply auth middleware to all admin routes
-router.use(authMiddleware);
+// Admin profile (auth only, not admin middleware)
+router.get('/profile', authMiddleware, adminController.getAdminProfile);
+
+// Apply admin middleware to all other admin routes
+router.use(adminMiddleware);
 
 // Dashboard stats
 router.get('/dashboard/stats', adminMiddleware, adminController.getDashboardStats);
@@ -34,5 +37,8 @@ router.get('/houses/:houseId', adminMiddleware, adminController.getHouseDetails)
 router.get('/verifications/queue', adminMiddleware, adminController.getVerificationQueue);
 router.post('/verifications/:verificationId/approve', adminMiddleware, adminController.approveVerification);
 router.post('/verifications/:verificationId/reject', adminMiddleware, adminController.rejectVerification);
+
+// Security monitoring
+router.get('/security/status/:email', adminMiddleware, adminController.getUserSecurityStatus);
 
 module.exports = router;

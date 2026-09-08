@@ -18,6 +18,7 @@ const notificationRoutes = require('./routes/notificationRoutes');
 const verificationRoutes = require('./routes/verificationRoutes');
 const adminRoutes = require('./routes/adminRoutes');
 const appContentRoutes = require('./routes/appContentRoutes');
+const securityRoutes = require('./routes/securityRoutes');
 
 const app = express();
 
@@ -115,6 +116,7 @@ app.use('/api/comments', commentRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/verification', verificationRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/admin/security', securityRoutes);
 app.use('/api/content', appContentRoutes);
 
 // Health check endpoint

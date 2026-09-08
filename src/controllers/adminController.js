@@ -1,4 +1,32 @@
 const pool = require('../config/db');
+const { trackAccountBan } = require('../services/securityEventService');
+
+// Get admin profile
+exports.getAdminProfile = async (req, res, next) => {
+  try {
+    const adminId = req.user.id;
+    
+    const result = await pool.query(
+      'SELECT id, email, first_name, last_name, role FROM users WHERE id = $1::uuid',
+      [adminId]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Admin not found' });
+    }
+    
+    const user = result.rows[0];
+    
+    res.json({
+      id: user.id,
+      email: user.email,
+      name: `${user.first_name} ${user.last_name || ''}`.trim(),
+      role: user.role.toLowerCase()
+    });
+  } catch (err) {
+    next(err);
+  }
+};
 
 // Get dashboard stats
 exports.getDashboardStats = async (req, res, next) => {
@@ -505,11 +533,22 @@ exports.banUser = async (req, res, next) => {
       // Column might already exist, ignore error
     }
     
+    // Get user email before banning
+    const userResult = await pool.query(
+      'SELECT email FROM users WHERE id = $1::uuid',
+      [userId]
+    );
+    
     await pool.query(`
       UPDATE users
       SET is_banned = true
       WHERE id = $1::uuid
     `, [userId]);
+
+    // Send security email if user found
+    if (userResult.rows.length > 0) {
+      await trackAccountBan(userId, userResult.rows[0].email, 'Banned by administrator');
+    }
 
     res.json({ success: true, message: 'User banned successfully' });
   } catch (err) {
@@ -581,6 +620,23 @@ exports.rejectVerification = async (req, res, next) => {
     res.json({ success: true, message: 'Verification rejected' });
   } catch (err) {
     res.status(500).json({ success: false, error: 'Failed to reject verification' });
+  }
+};
+
+// Get user security status
+exports.getUserSecurityStatus = async (req, res, next) => {
+  try {
+    const { email } = req.params;
+    const { getSecurityStatus } = require('../services/securityEventService');
+    
+    const securityStatus = await getSecurityStatus(email);
+    
+    res.json({
+      email: email,
+      ...securityStatus
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to get security status' });
   }
 };
 
