@@ -50,13 +50,26 @@ const ensureAuditLogTable = async () => {
         request_id VARCHAR(100),
         details JSONB,
         metadata JSONB,
-        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-        INDEX idx_audit_user_id (user_id),
-        INDEX idx_audit_event_type (event_type),
-        INDEX idx_audit_created_at (created_at),
-        INDEX idx_audit_risk_level (risk_level)
+        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
       )
     `);
+
+    // Create indexes separately
+    try {
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_audit_user_id ON security_audit_log(user_id)`);
+    } catch (e) { console.error('Index creation failed:', e.message); }
+    
+    try {
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_audit_event_type ON security_audit_log(event_type)`);
+    } catch (e) { console.error('Index creation failed:', e.message); }
+    
+    try {
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_audit_created_at ON security_audit_log(created_at)`);
+    } catch (e) { console.error('Index creation failed:', e.message); }
+    
+    try {
+      await pool.query(`CREATE INDEX IF NOT EXISTS idx_audit_risk_level ON security_audit_log(risk_level)`);
+    } catch (e) { console.error('Index creation failed:', e.message); }
   } catch (error) {
     if (process.env.NODE_ENV !== 'production') {
       console.error('Failed to create audit log table:', error.message);
@@ -92,8 +105,17 @@ const ensureAccountSecurityTable = async () => {
 
 // Initialize tables
 const initializeSecurityTables = async () => {
-  await ensureAuditLogTable();
-  await ensureAccountSecurityTable();
+  try {
+    await ensureAuditLogTable();
+  } catch (error) {
+    console.error('Audit log table initialization failed:', error.message);
+  }
+  
+  try {
+    await ensureAccountSecurityTable();
+  } catch (error) {
+    console.error('Account security table initialization failed:', error.message);
+  }
 };
 
 // Log security event
