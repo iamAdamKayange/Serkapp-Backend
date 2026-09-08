@@ -106,10 +106,21 @@ exports.login = async (req, res, next) => {
   const requestId = req.id || Math.random().toString(36).substring(7);
   
   try {
-    await ensureUserProfileColumns();
+    // Ensure user profile columns (non-blocking)
+    try {
+      await ensureUserProfileColumns();
+    } catch (schemaError) {
+      console.error('Profile column check failed:', schemaError.message);
+      // Continue anyway - don't fail login
+    }
     
-    // Initialize security tables if needed
-    await initializeSecurityTables();
+    // Initialize security tables if needed (non-blocking)
+    try {
+      await initializeSecurityTables();
+    } catch (schemaError) {
+      console.error('Security table initialization failed:', schemaError.message);
+      // Continue anyway - don't fail login
+    }
     
     const result = await pool.query(
       `SELECT id, email, password_hash, first_name, last_name, phone, role, profile_image_url, is_banned FROM users WHERE email = $1`,
@@ -204,52 +215,72 @@ exports.login = async (req, res, next) => {
       // Track failed login in-memory
       const securityResult = await trackFailedLogin(email, ip, user.id);
       
-      // Track in risk detection service
-      trackUserActivity(user.id, 'FAILED_LOGIN');
-      
-      // Update database failed login count
-      await updateFailedLoginCount(user.id, true);
-      
-      // Log security event
-      await logSecurityEvent({
-        userId: user.id,
-        eventType: AuditEventTypes.LOGIN_FAILED,
-        riskLevel: RiskLevels.SUSPICIOUS,
-        ipAddress: ip,
-        userAgent: userAgent,
-        endpoint: '/api/auth/login',
-        requestId: requestId,
-        details: { 
-          attemptCount: securityResult.attemptCount,
-          threshold: 5
-        }
-      });
-      
-      // Assess risk level
-      const riskAssessment = assessUserRisk(user.id);
-      if (riskAssessment.riskLevel !== RiskLevels.NORMAL) {
-        await updateRiskLevel(user.id, riskAssessment.riskLevel);
+      // Track in risk detection service (non-blocking)
+      try {
+        trackUserActivity(user.id, 'FAILED_LOGIN');
+      } catch (activityError) {
+        console.error('Activity tracking failed:', activityError.message);
       }
       
-      if (securityResult.locked) {
-        // Account is now locked - lock in database
-        await lockAccount(user.id, LockReasons.FAILED_LOGIN, null, securityResult.lockUntil);
-        await trackAccountLockout(user.id, email, securityResult.lockUntil);
-        
+      // Update database failed login count (non-blocking)
+      try {
+        await updateFailedLoginCount(user.id, true);
+      } catch (dbError) {
+        console.error('Failed login count update failed:', dbError.message);
+      }
+      
+      // Log security event (non-blocking)
+      try {
         await logSecurityEvent({
           userId: user.id,
-          eventType: AuditEventTypes.ACCOUNT_LOCKED,
-          riskLevel: RiskLevels.HIGH_RISK,
+          eventType: AuditEventTypes.LOGIN_FAILED,
+          riskLevel: RiskLevels.SUSPICIOUS,
           ipAddress: ip,
           userAgent: userAgent,
           endpoint: '/api/auth/login',
           requestId: requestId,
           details: { 
-            reason: LockReasons.FAILED_LOGIN,
-            lockUntil: securityResult.lockUntil,
-            attemptCount: securityResult.attemptCount
+            attemptCount: securityResult.attemptCount,
+            threshold: 5
           }
         });
+      } catch (logError) {
+        console.error('Security event logging failed:', logError.message);
+      }
+      
+      // Assess risk level (non-blocking)
+      try {
+        const riskAssessment = assessUserRisk(user.id);
+        if (riskAssessment.riskLevel !== RiskLevels.NORMAL) {
+          await updateRiskLevel(user.id, riskAssessment.riskLevel);
+        }
+      } catch (riskError) {
+        console.error('Risk assessment failed:', riskError.message);
+      }
+      
+      if (securityResult.locked) {
+        // Account is now locked - lock in database (non-blocking)
+        try {
+          await lockAccount(user.id, LockReasons.FAILED_LOGIN, null, securityResult.lockUntil);
+          await trackAccountLockout(user.id, email, securityResult.lockUntil);
+          
+          await logSecurityEvent({
+            userId: user.id,
+            eventType: AuditEventTypes.ACCOUNT_LOCKED,
+            riskLevel: RiskLevels.HIGH_RISK,
+            ipAddress: ip,
+            userAgent: userAgent,
+            endpoint: '/api/auth/login',
+            requestId: requestId,
+            details: { 
+              reason: LockReasons.FAILED_LOGIN,
+              lockUntil: securityResult.lockUntil,
+              attemptCount: securityResult.attemptCount
+            }
+          });
+        } catch (lockError) {
+          console.error('Account locking failed:', lockError.message);
+        }
         
         return res.status(423).json({ 
           error: 'Account temporarily locked due to too many failed login attempts',
@@ -263,31 +294,49 @@ exports.login = async (req, res, next) => {
     
     // Successful login - clear failed attempts
     clearFailedLoginAttempts(email);
-    await updateFailedLoginCount(user.id, false);
     
-    // Reset risk level to NORMAL on successful login
-    await updateRiskLevel(user.id, RiskLevels.NORMAL);
+    // Update database failed login count (non-blocking)
+    try {
+      await updateFailedLoginCount(user.id, false);
+    } catch (dbError) {
+      console.error('Failed login count reset failed:', dbError.message);
+    }
     
-    // Update last successful login in database
-    await pool.query(
-      `UPDATE account_security 
-       SET last_successful_login_at = NOW(),
-           updated_at = NOW()
-       WHERE user_id = $1::uuid`,
-      [user.id]
-    );
+    // Reset risk level to NORMAL on successful login (non-blocking)
+    try {
+      await updateRiskLevel(user.id, RiskLevels.NORMAL);
+    } catch (riskError) {
+      console.error('Risk level reset failed:', riskError.message);
+    }
     
-    // Log successful login
-    await logSecurityEvent({
-      userId: user.id,
-      eventType: AuditEventTypes.LOGIN_SUCCESS,
-      riskLevel: RiskLevels.NORMAL,
-      ipAddress: ip,
-      userAgent: userAgent,
-      endpoint: '/api/auth/login',
-      requestId: requestId,
-      details: { email: user.email }
-    });
+    // Update last successful login in database (non-blocking)
+    try {
+      await pool.query(
+        `UPDATE account_security 
+         SET last_successful_login_at = NOW(),
+             updated_at = NOW()
+         WHERE user_id = $1::uuid`,
+        [user.id]
+      );
+    } catch (updateError) {
+      console.error('Last login update failed:', updateError.message);
+    }
+    
+    // Log successful login (non-blocking)
+    try {
+      await logSecurityEvent({
+        userId: user.id,
+        eventType: AuditEventTypes.LOGIN_SUCCESS,
+        riskLevel: RiskLevels.NORMAL,
+        ipAddress: ip,
+        userAgent: userAgent,
+        endpoint: '/api/auth/login',
+        requestId: requestId,
+        details: { email: user.email }
+      });
+    } catch (logError) {
+      console.error('Login success logging failed:', logError.message);
+    }
     
     const token = generateToken(user);
     res.json({
@@ -309,7 +358,13 @@ exports.login = async (req, res, next) => {
 // @route GET /api/auth/me (protected)
 exports.getMe = async (req, res, next) => {
   try {
-    await ensureUserProfileColumns();
+    // Ensure user profile columns (non-blocking)
+    try {
+      await ensureUserProfileColumns();
+    } catch (schemaError) {
+      console.error('Profile column check failed:', schemaError.message);
+    }
+    
     const result = await pool.query(
       `SELECT id, email, first_name, last_name, phone, role, profile_image_url, created_at FROM users WHERE id = $1`,
       [req.user.id]
@@ -327,7 +382,13 @@ exports.updateMe = async (req, res, next) => {
   const avatar = req.file;
 
   try {
-    await ensureUserProfileColumns();
+    // Ensure user profile columns (non-blocking)
+    try {
+      await ensureUserProfileColumns();
+    } catch (schemaError) {
+      console.error('Profile column check failed:', schemaError.message);
+    }
+    
     let profileImageUrl = req.body.profileImageUrl || null;
     if (avatar) {
       const uploaded = await uploadToSpaces(
