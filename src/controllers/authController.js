@@ -37,11 +37,19 @@ const ensureUserProfileColumns = async () => {
   `);
 };
 
+const ensureUserBanColumn = async () => {
+  await pool.query(`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT FALSE
+  `);
+};
+
 // @route POST /api/auth/register
 exports.register = async (req, res, next) => {
   const { email, password, firstName, lastName, phone, role } = req.body;
   try {
     await ensureUserProfileColumns();
+    await ensureUserBanColumn();
     // Check if user exists
     const existing = await pool.query('SELECT id FROM users WHERE email = $1', [email]);
     if (existing.rows.length > 0) {
@@ -106,6 +114,13 @@ exports.login = async (req, res, next) => {
       await ensureUserProfileColumns();
     } catch (schemaError) {
       console.error('Profile column check failed:', schemaError.message);
+    }
+    
+    // Ensure user ban column (non-blocking)
+    try {
+      await ensureUserBanColumn();
+    } catch (schemaError) {
+      console.error('Ban column check failed:', schemaError.message);
     }
     
     // Initialize security tables if needed (non-blocking)
@@ -206,6 +221,13 @@ exports.getMe = async (req, res, next) => {
       console.error('Profile column check failed:', schemaError.message);
     }
     
+    // Ensure user ban column (non-blocking)
+    try {
+      await ensureUserBanColumn();
+    } catch (schemaError) {
+      console.error('Ban column check failed:', schemaError.message);
+    }
+    
     const result = await pool.query(
       `SELECT id, email, first_name, last_name, phone, role, profile_image_url, created_at FROM users WHERE id = $1`,
       [req.user.id]
@@ -228,6 +250,13 @@ exports.updateMe = async (req, res, next) => {
       await ensureUserProfileColumns();
     } catch (schemaError) {
       console.error('Profile column check failed:', schemaError.message);
+    }
+    
+    // Ensure user ban column (non-blocking)
+    try {
+      await ensureUserBanColumn();
+    } catch (schemaError) {
+      console.error('Ban column check failed:', schemaError.message);
     }
     
     let profileImageUrl = req.body.profileImageUrl || null;
@@ -284,6 +313,7 @@ exports.updateMeAvatar = async (req, res, next) => {
 
   try {
     await ensureUserProfileColumns();
+    await ensureUserBanColumn();
     const uploaded = await uploadToSpaces(
       avatar.buffer,
       avatar.originalname || 'avatar.jpg',
@@ -429,6 +459,7 @@ exports.requestPasswordReset = async (req, res, next) => {
   
   try {
     await ensureUserProfileColumns();
+    await ensureUserBanColumn();
     
     // Check if user exists
     const result = await pool.query(
@@ -465,6 +496,7 @@ exports.resetPassword = async (req, res, next) => {
   
   try {
     await ensureUserProfileColumns();
+    await ensureUserBanColumn();
     
     // Validate reset token (in real implementation, this would be cryptographically verified)
     if (!resetToken || resetToken.length < 32) {
