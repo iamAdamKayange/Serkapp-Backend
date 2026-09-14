@@ -89,8 +89,8 @@ const ensureNotificationTables = async () => {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS app_saved_houses (
       id BIGSERIAL PRIMARY KEY,
-      user_id TEXT NOT NULL,
-      house_id TEXT NOT NULL,
+      user_id UUID NOT NULL,
+      house_id UUID NOT NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       UNIQUE (user_id, house_id)
     )

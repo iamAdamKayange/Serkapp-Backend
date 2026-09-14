@@ -64,7 +64,7 @@ exports.createHouse = async (req, res, next) => {
         has_ceiling, has_aluminium, has_ceiling_board, has_tiles, has_fence,
         layout_type, has_private_bathroom, has_private_toilet, has_private_kitchen,
         is_shared_bathroom, is_shared_toilet, is_shared_kitchen, number_of_shared_units,
-        geom
+        latitude, longitude, geom
       ) VALUES (
         $1, $2, $3, $4, $5, $6, $7, $8, $9,
         $10, $11, $12,
@@ -73,7 +73,8 @@ exports.createHouse = async (req, res, next) => {
         $23, $24, $25, $26, $27,
         $28, $29, $30, $31,
         $32, $33, $34, $35,
-        ${hasValidCoords ? 'ST_SetSRID(ST_MakePoint($36, $37), 4326)' : 'NULL'}
+        $36, $37,
+        ${hasValidCoords ? 'ST_SetSRID(ST_MakePoint($38, $39), 4326)' : 'NULL'}
       )
       RETURNING id
     `;
@@ -89,7 +90,9 @@ exports.createHouse = async (req, res, next) => {
       layoutType || 'self_container',
       hasPrivateBathroom ?? true, hasPrivateToilet ?? true, hasPrivateKitchen ?? true,
       isSharedBathroom ?? false, isSharedToilet ?? false, isSharedKitchen ?? false,
-      numberOfSharedUnits
+      numberOfSharedUnits,
+      longitude ?? null,
+      latitude ?? null
     ];
 
     const finalValues = hasValidCoords ? [...baseValues, longitude, latitude] : baseValues;
@@ -493,7 +496,9 @@ exports.updateHouse = async (req, res, next) => {
       isSharedBathroom: 'is_shared_bathroom',
       isSharedToilet: 'is_shared_toilet',
       isSharedKitchen: 'is_shared_kitchen',
-      numberOfSharedUnits: 'number_of_shared_units'
+      numberOfSharedUnits: 'number_of_shared_units',
+      latitude: 'latitude',
+      longitude: 'longitude'
     };
 
     const setClauses = [];
