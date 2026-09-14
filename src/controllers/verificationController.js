@@ -5,6 +5,11 @@ const {
   sendNotificationToRoles,
   sendNotificationToUser,
 } = require('../services/notificationService');
+const {
+  getLocalizedNotification,
+  getNotificationTitle,
+  getNotificationBody,
+} = require('../services/notificationLocalization');
 
 const MAX_CANCELS = 3;
 const RESUBMIT_WAIT_DAYS = 7;
@@ -60,7 +65,20 @@ const notifyVerificationUser = async ({
   scope,
   status,
   adminNotes = null,
+  req,
 }) => {
+  // Get user's preferred language
+  const userResult = await pool.query(
+    'SELECT preferred_language FROM users WHERE id = $1::uuid',
+    [userId]
+  );
+  const userLanguage = userResult.rows[0]?.preferred_language || 'sw';
+
+  // Get localized notification strings
+  const localized = getLocalizedNotification(type, userLanguage);
+  const localizedTitle = localized.title || title;
+  const localizedBody = localized.body || body;
+
   const data = {
     notificationType: 'verification',
     scope,
@@ -71,17 +89,18 @@ const notifyVerificationUser = async ({
 
   await insertNotificationRecord({
     type,
-    title,
-    body,
+    title: localizedTitle,
+    body: localizedBody,
     data,
     targetUserId: userId,
     targetRoles: [userRole],
+    req: req,
   });
 
   await sendNotificationToUser({
     userId,
-    title,
-    body,
+    title: localizedTitle,
+    body: localizedBody,
     data,
     type,
   });
@@ -214,6 +233,7 @@ exports.submitIdentityVerification = async (req, res, next) => {
         body: 'We received your identity verification request and it is now under review.',
         scope: 'identity',
         status: 'pending',
+        req: req,
       }),
       insertNotificationRecord({
         type: 'verification_identity_submitted',
@@ -227,6 +247,7 @@ exports.submitIdentityVerification = async (req, res, next) => {
           fullName,
         },
         targetRoles: ['admin'],
+        req: req,
       }).then((record) =>
         sendNotificationToRoles({
           roles: ['admin'],
@@ -314,6 +335,7 @@ exports.cancelIdentityVerification = async (req, res, next) => {
       body: 'Your identity verification request was cancelled. You can submit again if you still have remaining attempts.',
       scope: 'identity',
       status: 'cancelled',
+      req: req,
     });
 
     res.json({
@@ -390,6 +412,7 @@ exports.reviewIdentityVerification = async (req, res, next) => {
       scope: 'identity',
       status,
       adminNotes: adminNotes || null,
+      req: req,
     });
 
     res.json({ message: `Identity verification ${status} successfully` });
@@ -510,6 +533,7 @@ exports.submitPropertyVerification = async (req, res, next) => {
         body: 'We received your property verification request and it is now under review.',
         scope: 'property',
         status: 'pending',
+        req: req,
       }),
       insertNotificationRecord({
         type: 'verification_property_submitted',
@@ -523,6 +547,7 @@ exports.submitPropertyVerification = async (req, res, next) => {
           address,
         },
         targetRoles: ['admin'],
+        req: req,
       }).then((record) =>
         sendNotificationToRoles({
           roles: ['admin'],
@@ -610,6 +635,7 @@ exports.cancelPropertyVerification = async (req, res, next) => {
       body: 'Your property verification request was cancelled. You can submit again if you still have remaining attempts.',
       scope: 'property',
       status: 'cancelled',
+      req: req,
     });
 
     res.json({
@@ -812,6 +838,7 @@ exports.submitCompleteVerification = async (req, res, next) => {
       body: `${fullName} has submitted a complete verification application`,
       scope: 'admin',
       status: 'pending',
+      req: req,
     });
 
     res.status(201).json({ 
@@ -869,6 +896,7 @@ exports.reviewPropertyVerification = async (req, res, next) => {
       scope: 'property',
       status,
       adminNotes: adminNotes || null,
+      req: req,
     });
 
     res.json({ message: `Property verification ${status} successfully` });

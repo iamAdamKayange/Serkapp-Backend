@@ -25,6 +25,7 @@ const validateRegister = (req, res, next) => {
     lastName: Joi.string().min(2).max(50).trim().optional(),
     phone: Joi.string().pattern(/^[+]?[(]?[0-9]{1,4}[)]?[-\s.]?[0-9]{1,4}[-\s.]?[0-9]{1,9}$/).optional(),
     role: Joi.string().valid('normal', 'landlord').default('normal'),
+    preferredLanguage: Joi.string().valid('sw', 'en').default('sw'),
   });
   const { value, error } = schema.validate(req.body, { 
     stripUnknown: true,

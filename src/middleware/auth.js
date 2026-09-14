@@ -19,21 +19,30 @@ const authMiddleware = async (req, res, next) => {
       return res.status(401).json({ error: 'Invalid token structure' });
     }
     
-    // Check if user is banned
+    // Check if user is banned and get user's preferred language
     try {
-      const banCheck = await pool.query(
-        'SELECT is_banned FROM users WHERE id = $1::uuid',
+      const userCheck = await pool.query(
+        'SELECT is_banned, preferred_language FROM users WHERE id = $1::uuid',
         [decoded.id]
       );
       
-      if (banCheck.rows.length > 0 && banCheck.rows[0].is_banned) {
-        return res.status(403).json({ error: 'Account is banned' });
+      if (userCheck.rows.length > 0) {
+        if (userCheck.rows[0].is_banned) {
+          return res.status(403).json({ error: 'Account is banned' });
+        }
+        // Include preferred language in req.user
+        req.user = {
+          ...decoded,
+          preferredLanguage: userCheck.rows[0].preferred_language || 'sw',
+        };
+      } else {
+        req.user = decoded;
       }
     } catch (dbError) {
-      // If database check fails, proceed (don't block on errors)
+      // If database check fails, proceed with token only
+      req.user = decoded;
     }
     
-    req.user = decoded;
     next();
   } catch (err) {
     if (err.name === 'TokenExpiredError') {

@@ -1,5 +1,10 @@
 const pool = require('../config/db');
 const { sendToTokens } = require('./firebaseService');
+const {
+  getLocalizedNotification,
+  getNotificationTitle,
+  getNotificationBody,
+} = require('./notificationLocalization');
 
 const NEW_HOUSES_TOPIC = process.env.FCM_NEW_HOUSES_TOPIC || 'new_houses';
 
@@ -701,14 +706,36 @@ const insertNotificationRecord = async ({
   data = {},
   targetUserId = null,
   targetRoles = ['normal', 'landlord', 'admin'],
+  language = 'sw',
+  req = null,
 }) => {
+  // If request is provided, try to get user's preferred language from header or user data
+  if (req) {
+    const headerLang = req.headers['accept-language'] || req.headers['Accept-Language'];
+    if (headerLang && (headerLang === 'en' || headerLang === 'sw')) {
+      language = headerLang;
+    }
+    if (req.user && req.user.preferredLanguage) {
+      language = req.user.preferredLanguage;
+    }
+  }
+
+  // Use localized strings if type is known and title/body not provided
+  let localizedTitle = title;
+  let localizedBody = body;
+  
+  if (!title || !body) {
+    localizedTitle = title || getNotificationTitle(type, language);
+    localizedBody = body || getNotificationBody(type, language);
+  }
+
   const result = await pool.query(
     `
       INSERT INTO app_notifications (type, title, body, house_id, data, target_user_id, target_roles)
       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7::text[])
       RETURNING id, type, title, body, house_id, data, created_at
     `,
-    [type, title, body, houseId, JSON.stringify(data), targetUserId, targetRoles],
+    [type, localizedTitle, localizedBody, houseId, JSON.stringify(data), targetUserId, targetRoles],
   );
   return result.rows[0];
 };
@@ -787,16 +814,6 @@ const createHouseCreatedNotification = async ({
   district,
   houseType,
 }) => {
-  const title = 'Nyumba mpya imeongezwa';
-  const bodyParts = [
-    houseName || 'Nyumba mpya',
-    location ? `eneo la ${location}` : null,
-    rentPrice ? `TZS ${Number(rentPrice).toLocaleString('en-US')}/mwezi` : null,
-  ].filter(Boolean);
-  const body = bodyParts.length > 0
-    ? bodyParts.join(' - ')
-    : 'Fungua SERIK kuona nyumba mpya iliyoongezwa.';
-
   const data = {
     houseId,
     landlordId,
@@ -808,21 +825,38 @@ const createHouseCreatedNotification = async ({
     click_action: 'FLUTTER_NOTIFICATION_CLICK',
   };
 
+  // Get localized notifications for each role
+  const normalSw = getLocalizedNotification('house_created', 'sw');
+  const normalEn = getLocalizedNotification('house_created', 'en');
+  const landlordSw = getLocalizedNotification('house_created', 'sw');
+  const landlordEn = getLocalizedNotification('house_created', 'en');
+  const adminSw = getLocalizedNotification('house_created', 'sw');
+  const adminEn = getLocalizedNotification('house_created', 'en');
+
+  const bodyParts = [
+    houseName || normalSw.title,
+    location ? `eneo la ${location}` : null,
+    rentPrice ? `TZS ${Number(rentPrice).toLocaleString('en-US')}/mwezi` : null,
+  ].filter(Boolean);
+  const body = bodyParts.length > 0
+    ? bodyParts.join(' - ')
+    : normalSw.body;
+
   const normalNotification = {
     type: 'house_created',
-    title,
+    title: normalSw.title,
     body,
     targetRoles: ['normal'],
   };
   const landlordNotification = {
     type: 'house_created',
-    title: 'Nyumba yako imechapishwa',
+    title: landlordSw.title,
     body: `${houseName || 'Nyumba yako'} imeongezwa na iko tayari kuonekana kwa wapangaji.`,
     targetRoles: ['landlord'],
   };
   const adminNotification = {
     type: 'house_created',
-    title: 'Nyumba mpya imeongezwa kwenye mfumo',
+    title: adminSw.title,
     body: `${houseName || 'Nyumba'} imeongezwa na landlord ${landlordId}.`,
     targetRoles: ['admin'],
   };

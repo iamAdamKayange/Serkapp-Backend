@@ -1,5 +1,12 @@
 const pool = require('../config/db');
 const { trackAccountBan } = require('../services/securityEventService');
+const {
+  insertNotificationRecord,
+  sendNotificationToUser,
+} = require('../services/notificationService');
+const {
+  getLocalizedNotification,
+} = require('../services/notificationLocalization');
 
 // Get admin profile
 exports.getAdminProfile = async (req, res, next) => {
@@ -400,7 +407,7 @@ exports.getUsers = async (req, res, next) => {
 exports.getHouses = async (req, res, next) => {
   try {
     const result = await pool.query(`
-      SELECT h.id, h.title, h.price, h.bedrooms, h.bathrooms, h.location, h.status, h.created_at, h.images,
+      SELECT h.id, h.brand_name, h.rent_price, h.bedrooms, h.location_address, h.status, h.created_at, h.rejection_reason,
              u.first_name, u.last_name, u.email
       FROM houses h
       JOIN users u ON h.landlord_id = u.id
@@ -409,20 +416,21 @@ exports.getHouses = async (req, res, next) => {
 
     res.json(result.rows.map(house => ({
       id: house.id,
-      title: house.title,
+      title: house.brand_name,
       landlord: `${house.first_name} ${house.last_name}`.trim(),
       landlordEmail: house.email,
-      location: house.location,
-      price: parseFloat(house.price),
+      location: house.location_address,
+      price: parseFloat(house.rent_price),
       bedrooms: house.bedrooms,
-      bathrooms: house.bathrooms,
-      status: house.status || 'active',
-      isActive: house.status === 'active',
+      status: house.status || 'pending_verification',
+      isActive: house.status === 'Inapatikana',
       isRented: house.status === 'rented',
-      images: house.images || [],
-      brandName: house.title,
+      isPending: house.status === 'pending_verification',
+      isRejected: house.status === 'Imekataliwa',
+      rejectionReason: house.rejection_reason,
+      brandName: house.brand_name,
       type: 'apartment',
-      rent: house.price,
+      rent: house.rent_price,
       listedAt: house.created_at,
     })));
   } catch (err) {
@@ -430,17 +438,105 @@ exports.getHouses = async (req, res, next) => {
   }
 };
 
-// Get house details (admin only)
+// Get house details (admin only - comprehensive)
 exports.getHouseDetails = async (req, res, next) => {
   try {
     const { houseId } = req.params;
+    
     const result = await pool.query(`
-      SELECT h.id, h.title, h.price, h.bedrooms, h.bathrooms, h.location, h.status, h.created_at, h.images,
-             h.description, h.type, h.latitude, h.longitude,
-             u.first_name, u.last_name, u.email, u.phone
+      WITH video_like_counts AS (
+        SELECT video_id::text AS video_key, COUNT(*)::int AS likes_count
+        FROM video_likes
+        GROUP BY video_id::text
+      ),
+      video_comment_counts AS (
+        SELECT video_id::text AS video_key, COUNT(*)::int AS comments_count
+        FROM video_comments
+        GROUP BY video_id::text
+      )
+      SELECT 
+        h.id,
+        h.brand_name,
+        h.owner_name,
+        h.house_number,
+        h.phone,
+        h.status,
+        h.type,
+        h.bedrooms,
+        h.description,
+        h.rent_price,
+        h.deposit_amount,
+        h.location_address,
+        h.region,
+        h.district,
+        h.division,
+        h.ward,
+        h.village,
+        h.street,
+        h.water_included,
+        h.electricity_included,
+        h.internet_included,
+        h.nearby_amenities,
+        h.has_ceiling,
+        h.has_aluminium,
+        h.has_ceiling_board,
+        h.has_tiles,
+        h.has_fence,
+        h.layout_type,
+        h.has_private_bathroom,
+        h.has_private_toilet,
+        h.has_private_kitchen,
+        h.is_shared_bathroom,
+        h.is_shared_toilet,
+        h.is_shared_kitchen,
+        h.number_of_shared_units,
+        h.created_at,
+        h.updated_at,
+        h.rejection_reason,
+        COALESCE(h.latitude, 0) AS latitude,
+        COALESCE(h.longitude, 0) AS longitude,
+        COALESCE(
+          json_agg(DISTINCT hi.image_url) FILTER (WHERE hi.image_url IS NOT NULL),
+          '[]'
+        ) AS images,
+        COALESCE(
+          json_agg(DISTINCT jsonb_build_object(
+            'id', hv.id,
+            'url', hv.video_url,
+            'likes_count', COALESCE(vl.likes_count, 0),
+            'comments_count', COALESCE(vc.comments_count, 0)
+          )) FILTER (WHERE hv.video_url IS NOT NULL),
+          '[]'
+        ) AS videos,
+        COALESCE(
+          json_agg(DISTINCT hvt.thumbnail_url) FILTER (WHERE hvt.thumbnail_url IS NOT NULL),
+          '[]'
+        ) AS video_thumbnails,
+        u.id AS landlord_id,
+        u.first_name AS landlord_first_name,
+        u.last_name AS landlord_last_name,
+        u.email AS landlord_email,
+        u.phone AS landlord_phone,
+        u.profile_image_url AS landlord_profile_image,
+        u.role AS landlord_role,
+        u.is_banned AS landlord_is_banned,
+        li.status AS identity_verification_status,
+        li.submitted_at AS identity_submitted_at,
+        li.reviewed_at AS identity_reviewed_at,
+        lp.status AS property_verification_status,
+        lp.submitted_at AS property_submitted_at,
+        lp.reviewed_at AS property_reviewed_at
       FROM houses h
-      JOIN users u ON h.landlord_id = u.id
+      LEFT JOIN users u ON u.id = h.landlord_id
+      LEFT JOIN landlord_identity_verification li ON li.user_id = u.id
+      LEFT JOIN landlord_property_verification lp ON lp.user_id = u.id
+      LEFT JOIN house_images hi ON hi.house_id = h.id
+      LEFT JOIN house_videos hv ON hv.house_id = h.id
+      LEFT JOIN house_video_thumbnails hvt ON hvt.house_id = h.id
+      LEFT JOIN video_like_counts vl ON vl.video_key = hv.id::text
+      LEFT JOIN video_comment_counts vc ON vc.video_key = hv.id::text
       WHERE h.id = $1
+      GROUP BY h.id, u.id, li.id, lp.id
     `, [houseId]);
 
     if (result.rows.length === 0) {
@@ -450,29 +546,294 @@ exports.getHouseDetails = async (req, res, next) => {
     const house = result.rows[0];
     res.json({
       id: house.id,
-      title: house.title,
-      price: parseFloat(house.price),
-      bedrooms: house.bedrooms,
-      bathrooms: house.bathrooms,
-      location: house.location,
+      brandName: house.brand_name,
+      ownerName: house.owner_name,
+      houseNumber: house.house_number,
+      phone: house.phone,
       status: house.status,
-      isActive: house.status === 'active',
-      isRented: house.status === 'rented',
-      images: house.images || [],
+      type: house.type,
+      bedrooms: house.bedrooms,
       description: house.description,
-      type: house.type || 'apartment',
-      latitude: house.latitude,
-      longitude: house.longitude,
+      rentPrice: parseFloat(house.rent_price) || 0,
+      depositAmount: parseFloat(house.deposit_amount) || 0,
+      locationAddress: house.location_address,
+      region: house.region,
+      district: house.district,
+      division: house.division,
+      ward: house.ward,
+      village: house.village,
+      street: house.street,
+      waterIncluded: house.water_included,
+      electricityIncluded: house.electricity_included,
+      internetIncluded: house.internet_included,
+      nearbyAmenities: house.nearby_amenities,
+      hasCeiling: house.has_ceiling,
+      hasAluminium: house.has_aluminium,
+      hasCeilingBoard: house.has_ceiling_board,
+      hasTiles: house.has_tiles,
+      hasFence: house.has_fence,
+      layoutType: house.layout_type,
+      hasPrivateBathroom: house.has_private_bathroom,
+      hasPrivateToilet: house.has_private_toilet,
+      hasPrivateKitchen: house.has_private_kitchen,
+      isSharedBathroom: house.is_shared_bathroom,
+      isSharedToilet: house.is_shared_toilet,
+      isSharedKitchen: house.is_shared_kitchen,
+      numberOfSharedUnits: house.number_of_shared_units,
+      latitude: parseFloat(house.latitude) || 0,
+      longitude: parseFloat(house.longitude) || 0,
+      rejectionReason: house.rejection_reason,
+      images: house.images || [],
+      videos: house.videos || [],
+      videoThumbnails: house.video_thumbnails || [],
       landlord: {
-        firstName: house.first_name,
-        lastName: house.last_name,
-        email: house.email,
-        phone: house.phone,
+        id: house.landlord_id,
+        firstName: house.landlord_first_name,
+        lastName: house.landlord_last_name,
+        email: house.landlord_email,
+        phone: house.landlord_phone,
+        profileImage: house.landlord_profile_image,
+        role: house.landlord_role,
+        isBanned: house.landlord_is_banned,
+        identityVerificationStatus: house.identity_verification_status,
+        identitySubmittedAt: house.identity_submitted_at,
+        identityReviewedAt: house.identity_reviewed_at,
+        propertyVerificationStatus: house.property_verification_status,
+        propertySubmittedAt: house.property_submitted_at,
+        propertyReviewedAt: house.property_reviewed_at,
       },
       createdAt: house.created_at,
+      updatedAt: house.updated_at,
     });
   } catch (err) {
+    console.error('getHouseDetails error:', err.message);
     res.status(500).json({ error: 'Failed to fetch house details' });
+  }
+};
+
+// Approve house (admin only)
+exports.approveHouse = async (req, res, next) => {
+  try {
+    const { houseId } = req.params;
+    const adminId = req.user.id;
+
+    // Get house and landlord details
+    const houseResult = await pool.query(
+      `SELECT h.id, h.landlord_id, h.brand_name, h.status, u.email, u.preferred_language
+       FROM houses h
+       JOIN users u ON u.id = h.landlord_id
+       WHERE h.id = $1`,
+      [houseId]
+    );
+
+    if (houseResult.rows.length === 0) {
+      return res.status(404).json({ error: 'House not found' });
+    }
+
+    const house = houseResult.rows[0];
+    const landlordLanguage = house.preferred_language || 'sw';
+
+    // Update house status to approved/active and clear rejection reason
+    await pool.query(
+      `UPDATE houses 
+       SET status = 'Inapatikana', 
+           rejection_reason = NULL,
+           updated_at = NOW() 
+       WHERE id = $1`,
+      [houseId]
+    );
+
+    // Send localized notification to landlord
+    const localized = getLocalizedNotification('house_approved', landlordLanguage);
+    await insertNotificationRecord({
+      type: 'house_approved',
+      title: localized.title,
+      body: localized.body,
+      data: {
+        notificationType: 'house_approved',
+        houseId: houseId,
+        houseName: house.brand_name,
+      },
+      targetUserId: house.landlord_id,
+      targetRoles: ['landlord'],
+      req: req,
+    });
+
+    await sendNotificationToUser({
+      userId: house.landlord_id,
+      title: localized.title,
+      body: localized.body,
+      data: {
+        notificationType: 'house_approved',
+        houseId: houseId,
+        houseName: house.brand_name,
+      },
+      type: 'house_approved',
+    });
+
+    res.json({ success: true, message: 'House approved successfully' });
+  } catch (err) {
+    console.error('approveHouse error:', err.message);
+    res.status(500).json({ error: 'Failed to approve house' });
+  }
+};
+
+// Reject house (admin only)
+exports.rejectHouse = async (req, res, next) => {
+  try {
+    const { houseId } = req.params;
+    const { reason } = req.body;
+    const adminId = req.user.id;
+
+    if (!reason || reason.trim().length === 0) {
+      return res.status(400).json({ error: 'Rejection reason is required' });
+    }
+
+    // Get house and landlord details
+    const houseResult = await pool.query(
+      `SELECT h.id, h.landlord_id, h.brand_name, h.status, u.email, u.preferred_language
+       FROM houses h
+       JOIN users u ON u.id = h.landlord_id
+       WHERE h.id = $1`,
+      [houseId]
+    );
+
+    if (houseResult.rows.length === 0) {
+      return res.status(404).json({ error: 'House not found' });
+    }
+
+    const house = houseResult.rows[0];
+    const landlordLanguage = house.preferred_language || 'sw';
+
+    // Add rejection_reason column if it doesn't exist
+    try {
+      await pool.query(`
+        ALTER TABLE houses
+        ADD COLUMN IF NOT EXISTS rejection_reason TEXT
+      `);
+    } catch (alterErr) {
+      // Column might already exist, ignore error
+    }
+
+    // Update house status to rejected with reason
+    await pool.query(
+      `UPDATE houses 
+       SET status = 'Imekataliwa', 
+           rejection_reason = $2,
+           updated_at = NOW() 
+       WHERE id = $1`,
+      [houseId, reason]
+    );
+
+    // Send localized notification to landlord
+    const localized = getLocalizedNotification('house_rejected', landlordLanguage);
+    const localizedBody = `${localized.body}${reason ? ` Reason: ${reason}` : ''}`;
+    
+    await insertNotificationRecord({
+      type: 'house_rejected',
+      title: localized.title,
+      body: localizedBody,
+      data: {
+        notificationType: 'house_rejected',
+        houseId: houseId,
+        houseName: house.brand_name,
+        reason: reason,
+      },
+      targetUserId: house.landlord_id,
+      targetRoles: ['landlord'],
+      req: req,
+    });
+
+    await sendNotificationToUser({
+      userId: house.landlord_id,
+      title: localized.title,
+      body: localizedBody,
+      data: {
+        notificationType: 'house_rejected',
+        houseId: houseId,
+        houseName: house.brand_name,
+        reason: reason,
+      },
+      type: 'house_rejected',
+    });
+
+    res.json({ success: true, message: 'House rejected successfully' });
+  } catch (err) {
+    console.error('rejectHouse error:', err.message);
+    res.status(500).json({ error: 'Failed to reject house' });
+  }
+};
+
+// Hide house (admin only)
+exports.hideHouse = async (req, res, next) => {
+  try {
+    const { houseId } = req.params;
+
+    const result = await pool.query(
+      `UPDATE houses SET status = 'Imefichwa', updated_at = NOW() WHERE id = $1 RETURNING id`,
+      [houseId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'House not found' });
+    }
+
+    res.json({ success: true, message: 'House hidden successfully' });
+  } catch (err) {
+    console.error('hideHouse error:', err.message);
+    res.status(500).json({ error: 'Failed to hide house' });
+  }
+};
+
+// Unhide house (admin only)
+exports.unhideHouse = async (req, res, next) => {
+  try {
+    const { houseId } = req.params;
+
+    const result = await pool.query(
+      `UPDATE houses SET status = 'Inapatikana', updated_at = NOW() WHERE id = $1 RETURNING id`,
+      [houseId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'House not found' });
+    }
+
+    res.json({ success: true, message: 'House unhidden successfully' });
+  } catch (err) {
+    console.error('unhideHouse error:', err.message);
+    res.status(500).json({ error: 'Failed to unhide house' });
+  }
+};
+
+// Delete house (admin only)
+exports.deleteHouse = async (req, res, next) => {
+  try {
+    const { houseId } = req.params;
+
+    // Get house to delete associated media
+    const houseResult = await pool.query(
+      `SELECT image_url FROM house_images WHERE house_id = $1`,
+      [houseId]
+    );
+
+    // Delete from database
+    const result = await pool.query(
+      `DELETE FROM houses WHERE id = $1 RETURNING id`,
+      [houseId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'House not found' });
+    }
+
+    // Note: Media deletion from Spaces would require additional service call
+    // For now, we delete the database record which makes the house inaccessible
+
+    res.json({ success: true, message: 'House deleted successfully' });
+  } catch (err) {
+    console.error('deleteHouse error:', err.message);
+    res.status(500).json({ error: 'Failed to delete house' });
   }
 };
 
@@ -522,6 +883,12 @@ exports.getAdminProfile = async (req, res, next) => {
 exports.banUser = async (req, res, next) => {
   try {
     const { userId } = req.params;
+    const adminId = req.user.id;
+    
+    // Prevent admin from banning themselves
+    if (userId === adminId) {
+      return res.status(400).json({ success: false, error: 'Cannot ban yourself' });
+    }
     
     // Check if is_banned column exists, if not, create it
     try {
@@ -533,11 +900,20 @@ exports.banUser = async (req, res, next) => {
       // Column might already exist, ignore error
     }
     
-    // Get user email before banning
+    // Get user email and role before banning
     const userResult = await pool.query(
-      'SELECT email FROM users WHERE id = $1::uuid',
+      'SELECT email, role FROM users WHERE id = $1::uuid',
       [userId]
     );
+    
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+    
+    // Prevent banning other admins
+    if (userResult.rows[0].role === 'admin') {
+      return res.status(403).json({ success: false, error: 'Cannot ban another admin' });
+    }
     
     await pool.query(`
       UPDATE users
@@ -546,9 +922,7 @@ exports.banUser = async (req, res, next) => {
     `, [userId]);
 
     // Send security email if user found
-    if (userResult.rows.length > 0) {
-      await trackAccountBan(userId, userResult.rows[0].email, 'Banned by administrator');
-    }
+    await trackAccountBan(userId, userResult.rows[0].email, 'Banned by administrator');
 
     res.json({ success: true, message: 'User banned successfully' });
   } catch (err) {
@@ -560,6 +934,7 @@ exports.banUser = async (req, res, next) => {
 exports.unbanUser = async (req, res, next) => {
   try {
     const { userId } = req.params;
+    const adminId = req.user.id;
     
     // Check if is_banned column exists, if not, create it
     try {
@@ -569,6 +944,21 @@ exports.unbanUser = async (req, res, next) => {
       `);
     } catch (alterErr) {
       // Column might already exist, ignore error
+    }
+    
+    // Get user role before unbanning
+    const userResult = await pool.query(
+      'SELECT role FROM users WHERE id = $1::uuid',
+      [userId]
+    );
+    
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'User not found' });
+    }
+    
+    // Prevent unbanning other admins
+    if (userResult.rows[0].role === 'admin') {
+      return res.status(403).json({ success: false, error: 'Cannot unban another admin' });
     }
     
     await pool.query(`

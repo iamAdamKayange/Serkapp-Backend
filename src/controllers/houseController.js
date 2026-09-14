@@ -81,7 +81,7 @@ exports.createHouse = async (req, res, next) => {
     const baseValues = [
       landlordId,
       firstName, name, lastName, phone,
-      status || 'Inapatikana', type, bedrooms, description,
+      status || 'pending_verification', type, bedrooms, description,
       rentPrice, depositAmount, locationAddress,
       region, district, division, ward, village, street,
       waterIncluded ?? false, electricityIncluded ?? false, internetIncluded ?? false, nearbyAmenities,
@@ -180,6 +180,10 @@ exports.uploadThumbnail = async (req, res, next) => {
 // ========== 3. GET ALL HOUSES (with aggregated media) ==========
 exports.getAllHouses = async (req, res, next) => {
   try {
+    const { limit = 50, offset = 0 } = req.query;
+    const limitNum = Math.min(parseInt(limit) || 50, 100); // Max 100 houses per request
+    const offsetNum = Math.max(parseInt(offset) || 0, 0);
+
     const query = `
       WITH video_like_counts AS (
         SELECT video_id::text AS video_key, COUNT(*)::int AS likes_count
@@ -231,11 +235,12 @@ exports.getAllHouses = async (req, res, next) => {
       LEFT JOIN house_video_thumbnails hvt ON hvt.house_id = h.id
       LEFT JOIN video_like_counts vl ON vl.video_key = hv.id::text
       LEFT JOIN video_comment_counts vc ON vc.video_key = hv.id::text
-      WHERE h.status = 'Inapatikana'
+      WHERE h.status = 'Inapatikana' AND h.deleted_at IS NULL
       GROUP BY h.id, u.first_name, u.last_name
       ORDER BY h.created_at DESC
+      LIMIT $1 OFFSET $2
     `;
-    const result = await pool.query(query);
+    const result = await pool.query(query, [limitNum, offsetNum]);
     res.json(result.rows);
   } catch (err) { 
     console.error('getAllHouses error:', err.message);
@@ -247,6 +252,10 @@ exports.getAllHouses = async (req, res, next) => {
 // ========== 3.5 GET VIDEO FEED (NEW - lightweight) ==========
 exports.getVideoFeed = async (req, res, next) => {
   try {
+    const { limit = 20, offset = 0 } = req.query;
+    const limitNum = Math.min(parseInt(limit) || 20, 50); // Max 50 for video feed
+    const offsetNum = Math.max(parseInt(offset) || 0, 0);
+
     const query = `
       WITH video_like_counts AS (
         SELECT video_id::text AS video_key, COUNT(*)::int AS likes_count
@@ -294,11 +303,12 @@ exports.getVideoFeed = async (req, res, next) => {
       LEFT JOIN house_video_thumbnails hvt ON hvt.house_id = h.id
       LEFT JOIN video_like_counts vl ON vl.video_key = hv.id::text
       LEFT JOIN video_comment_counts vc ON vc.video_key = hv.id::text
-      WHERE h.status = 'Inapatikana'
+      WHERE h.status = 'Inapatikana' AND h.deleted_at IS NULL
       GROUP BY h.id, u.first_name, u.last_name
       ORDER BY h.created_at DESC
+      LIMIT $1 OFFSET $2
     `;
-    const result = await pool.query(query);
+    const result = await pool.query(query, [limitNum, offsetNum]);
     res.json(result.rows);
   } catch (err) { 
     console.error('getVideoFeed error:', err.message);
@@ -326,6 +336,7 @@ exports.getHouseById = async (req, res, next) => {
         h.layout_type, h.has_private_bathroom, h.has_private_toilet, h.has_private_kitchen,
         h.is_shared_bathroom, h.is_shared_toilet, h.is_shared_kitchen, h.number_of_shared_units,
         h.created_at, h.updated_at,
+        h.rejection_reason,
         ST_Y(h.geom) AS latitude,
         ST_X(h.geom) AS longitude,
         COALESCE(
@@ -374,6 +385,7 @@ exports.getMyHouses = async (req, res, next) => {
         h.layout_type, h.has_private_bathroom, h.has_private_toilet, h.has_private_kitchen,
         h.is_shared_bathroom, h.is_shared_toilet, h.is_shared_kitchen, h.number_of_shared_units,
         h.created_at, h.updated_at,
+        h.rejection_reason,
         ST_Y(h.geom) AS latitude,
         ST_X(h.geom) AS longitude,
         COALESCE(
@@ -393,7 +405,7 @@ exports.getMyHouses = async (req, res, next) => {
       LEFT JOIN house_images hi ON hi.house_id = h.id
       LEFT JOIN house_videos hv ON hv.house_id = h.id
       LEFT JOIN house_video_thumbnails hvt ON hvt.house_id = h.id
-      WHERE h.landlord_id = $1
+      WHERE h.landlord_id = $1 AND h.deleted_at IS NULL
       GROUP BY h.id, u.first_name, u.last_name
       ORDER BY h.created_at DESC
     `;
@@ -410,8 +422,42 @@ exports.updateHouse = async (req, res, next) => {
   const landlordId = req.user.id;
   const updates = req.body;
   try {
-    const ownerCheck = await pool.query(`SELECT id FROM houses WHERE id = $1 AND landlord_id = $2`, [id, landlordId]);
+    const ownerCheck = await pool.query(`SELECT id, status, rent_price, latitude, longitude, type FROM houses WHERE id = $1 AND landlord_id = $2`, [id, landlordId]);
     if (ownerCheck.rows.length === 0) return res.status(403).json({ error: 'Huna ruhusa' });
+
+    const currentHouse = ownerCheck.rows[0];
+    const currentStatus = currentHouse.status;
+    
+    // Check if significant changes that require re-verification
+    let requiresReverification = false;
+    if (currentStatus === 'Inapatikana') {
+      // Check location change
+      if (updates.latitude !== undefined && updates.longitude !== undefined) {
+        const newLat = parseFloat(updates.latitude);
+        const newLng = parseFloat(updates.longitude);
+        const oldLat = currentHouse.latitude;
+        const oldLng = currentHouse.longitude;
+        if (!isNaN(newLat) && !isNaN(newLng) && oldLat !== null && oldLng !== null) {
+          const locationChanged = Math.abs(newLat - oldLat) > 0.0001 || Math.abs(newLng - oldLng) > 0.0001;
+          if (locationChanged) requiresReverification = true;
+        }
+      }
+      
+      // Check price change (more than 10%)
+      if (updates.rentPrice !== undefined) {
+        const newPrice = parseFloat(updates.rentPrice);
+        const oldPrice = parseFloat(currentHouse.rent_price);
+        if (!isNaN(newPrice) && !isNaN(oldPrice) && oldPrice > 0) {
+          const priceChanged = Math.abs(newPrice - oldPrice) / oldPrice > 0.1;
+          if (priceChanged) requiresReverification = true;
+        }
+      }
+      
+      // Check type change
+      if (updates.type !== undefined && updates.type !== currentHouse.type) {
+        requiresReverification = true;
+      }
+    }
 
     const fieldMap = {
       firstName: 'brand_name',
@@ -463,24 +509,83 @@ exports.updateHouse = async (req, res, next) => {
       setClauses.push(`geom = ST_SetSRID(ST_MakePoint($${idx++}, $${idx++}), 4326)`);
       values.push(updates.longitude, updates.latitude);
     }
+    
+    // Override status if re-verification is required
+    if (requiresReverification) {
+      setClauses.push(`status = $${idx++}`);
+      values.push('pending_verification');
+    }
+    
     if (setClauses.length === 0) return res.status(400).json({ error: 'No fields to update' });
     setClauses.push('updated_at = NOW()');
     values.push(id);
-    const query = `UPDATE houses SET ${setClauses.join(', ')} WHERE id = $${idx} RETURNING id`;
+    const query = `UPDATE houses SET ${setClauses.join(', ')} WHERE id = $${idx} RETURNING id, status`;
     const result = await pool.query(query, values);
+    
     emitToAll('house:updated', { houseId: result.rows[0].id, landlordId });
     emitToLandlord(landlordId, 'landlord:house_changed', {
       action: 'updated',
       houseId: result.rows[0].id,
       landlordId,
     });
-    res.json({ message: 'Nyumba imebadilishwa', houseId: result.rows[0].id });
+    
+    const responseData = { message: 'Nyumba imebadilishwa', houseId: result.rows[0].id };
+    if (requiresReverification) {
+      responseData.requiresReverification = true;
+      responseData.message = 'Significant changes require admin approval';
+    }
+    
+    res.json(responseData);
   } catch (err) { 
     next(err); 
   }
 };
 
-// ========== 7. DELETE HOUSE ==========
+// ========== 7. HIDE HOUSE (Landlord) ==========
+exports.hideHouse = async (req, res, next) => {
+  const { id } = req.params;
+  const landlordId = req.user.id;
+  try {
+    const ownerCheck = await pool.query(`SELECT id FROM houses WHERE id = $1 AND landlord_id = $2`, [id, landlordId]);
+    if (ownerCheck.rows.length === 0) {
+      return res.status(403).json({ error: 'Huna ruhusa' });
+    }
+
+    await pool.query(`UPDATE houses SET status = 'Imefichwa', updated_at = NOW() WHERE id = $1`, [id]);
+    res.json({ message: 'Nyumba imefichwa' });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// ========== 7.5 UNHIDE HOUSE (Landlord) ==========
+exports.unhideHouse = async (req, res, next) => {
+  const { id } = req.params;
+  const landlordId = req.user.id;
+  try {
+    const ownerCheck = await pool.query(`SELECT id, status FROM houses WHERE id = $1 AND landlord_id = $2`, [id, landlordId]);
+    if (ownerCheck.rows.length === 0) {
+      return res.status(403).json({ error: 'Huna ruhusa' });
+    }
+
+    const currentStatus = ownerCheck.rows[0].status;
+    
+    // If house was previously approved (Inapatikana), restore to approved
+    // If house was rejected, it stays in pending_verification
+    // If house was pending, it stays pending
+    let newStatus = 'pending_verification';
+    if (currentStatus === 'Inapatikana') {
+      newStatus = 'Inapatikana';
+    }
+
+    await pool.query(`UPDATE houses SET status = $2, updated_at = NOW() WHERE id = $1`, [id, newStatus]);
+    res.json({ message: newStatus === 'Inapatikana' ? 'Nyumba imefichuliwa' : 'Nyumba imefichuliwa na inahitaji kuidhinishwa upya' });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// ========== 8. DELETE HOUSE (Soft Delete) ==========
 exports.deleteHouse = async (req, res, next) => {
   const { id } = req.params;
   const landlordId = req.user.id;
@@ -488,29 +593,33 @@ exports.deleteHouse = async (req, res, next) => {
   try {
     await client.query('BEGIN');
     
+    // Add deleted_at column if it doesn't exist
+    try {
+      await client.query(`
+        ALTER TABLE houses
+        ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ
+      `);
+    } catch (alterErr) {
+      // Column might already exist, ignore error
+    }
+    
     const ownerCheck = await client.query(`SELECT id FROM houses WHERE id = $1 AND landlord_id = $2`, [id, landlordId]);
     if (ownerCheck.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(403).json({ error: 'Huna ruhusa' });
     }
 
-    const images = await client.query(`SELECT image_url FROM house_images WHERE house_id = $1`, [id]);
-    const videos = await client.query(`SELECT video_url FROM house_videos WHERE house_id = $1`, [id]);
-    const thumbnails = await client.query(`SELECT thumbnail_url FROM house_video_thumbnails WHERE house_id = $1`, [id]);
-
-    for (const img of images.rows) await deleteFromSpaces(img.image_url);
-    for (const vid of videos.rows) await deleteFromSpaces(vid.video_url);
-    for (const thumb of thumbnails.rows) await deleteFromSpaces(thumb.thumbnail_url);
-
-    await client.query(`DELETE FROM houses WHERE id = $1`, [id]);
+    // Soft delete: mark as deleted instead of removing record
+    await client.query(`UPDATE houses SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1`, [id]);
     await client.query('COMMIT');
+    
     emitToAll('house:deleted', { houseId: id, landlordId });
     emitToLandlord(landlordId, 'landlord:house_changed', {
       action: 'deleted',
       houseId: id,
       landlordId,
     });
-    res.json({ message: 'Nyumba imefutwa pamoja na faili zake zote DigitalOcean Spaces.' });
+    res.json({ message: 'Nyumba imefutwa.' });
   } catch (err) {
     await client.query('ROLLBACK');
     next(err);

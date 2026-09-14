@@ -10,6 +10,8 @@ const {
   getMyHouses,
   getVideoFeed,
   updateHouse,
+  hideHouse,
+  unhideHouse,
   deleteHouse,
   addHouseImage,
   addHouseVideo,
@@ -35,6 +37,8 @@ router.post('/', authMiddleware, landlordOnly, createHouse);
 router.get('/landlord/my-houses', authMiddleware, landlordOnly, getMyHouses);
 
 router.put('/:id', authMiddleware, landlordOnly, updateHouse);
+router.post('/:id/hide', authMiddleware, landlordOnly, hideHouse);
+router.post('/:id/unhide', authMiddleware, landlordOnly, unhideHouse);
 router.delete('/:id', authMiddleware, landlordOnly, deleteHouse);
 
 router.post('/:id/images', authMiddleware, landlordOnly, addHouseImage);

@@ -1,5 +1,5 @@
 const express = require('express');
-const { register, login, getMe, updateMe, deleteAccount, requestPasswordReset, resetPassword, changePassword } = require('../controllers/authController');
+const { register, login, getMe, updateMe, deleteAccount, requestPasswordReset, resetPassword, changePassword, updateLanguage } = require('../controllers/authController');
 const { authMiddleware } = require('../middleware/auth');
 const { upload } = require('../middleware/upload');
 const { validateRegister, validateLogin, validatePasswordReset, validatePasswordChange } = require('../middleware/validation');
@@ -11,6 +11,7 @@ router.post('/register', safeEmailResponse, validateRegister, register);
 router.post('/login', safeEmailResponse, passwordOperationLimiter, validateLogin, login);
 router.get('/me', authMiddleware, getMe);
 router.put('/me', authMiddleware, upload.single('avatar'), updateMe);
+router.put('/me/language', authMiddleware, updateLanguage);
 router.delete('/me', authMiddleware, passwordOperationLimiter, deleteAccount);
 router.post('/password-reset/request', passwordOperationLimiter, validatePasswordReset, requestPasswordReset);
 router.post('/password-reset/confirm', passwordOperationLimiter, validatePasswordReset, resetPassword);

@@ -10,6 +10,7 @@ class User {
     this.lastName = row.last_name;
     this.phone = row.phone;
     this.role = row.role;
+    this.preferredLanguage = row.preferred_language || 'sw';
     this.createdAt = row.created_at;
     this.updatedAt = row.updated_at;
   }
@@ -48,7 +49,7 @@ class User {
 
   // Update user (partial)
   async update(updates) {
-    const allowed = ['first_name', 'last_name', 'phone'];
+    const allowed = ['first_name', 'last_name', 'phone', 'preferred_language'];
     const setClauses = [];
     const values = [];
     let idx = 1;

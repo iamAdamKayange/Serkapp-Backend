@@ -46,7 +46,7 @@ const ensureUserBanColumn = async () => {
 
 // @route POST /api/auth/register
 exports.register = async (req, res, next) => {
-  const { email, password, firstName, lastName, phone, role } = req.body;
+  const { email, password, firstName, lastName, phone, role, preferredLanguage } = req.body;
   try {
     await ensureUserProfileColumns();
     await ensureUserBanColumn();
@@ -63,12 +63,16 @@ exports.register = async (req, res, next) => {
     const validRoles = ['normal', 'landlord', 'admin'];
     const userRole = validRoles.includes(role) ? role : 'normal';
     
+    // Validate and set preferred language
+    const validLanguages = ['sw', 'en'];
+    const userLanguage = validLanguages.includes(preferredLanguage) ? preferredLanguage : 'sw';
+    
     // Insert user
     const result = await pool.query(
-      `INSERT INTO users (email, password_hash, first_name, last_name, phone, role)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, email, first_name, last_name, phone, role, profile_image_url`,
-      [email, passwordHash, firstName, lastName, phone, userRole]
+      `INSERT INTO users (email, password_hash, first_name, last_name, phone, role, preferred_language)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, email, first_name, last_name, phone, role, profile_image_url, preferred_language`,
+      [email, passwordHash, firstName, lastName, phone, userRole, userLanguage]
     );
     const user = result.rows[0];
     const token = generateToken(user);
@@ -97,6 +101,7 @@ exports.register = async (req, res, next) => {
       phone: user.phone,
       role: user.role,
       profileImageUrl: user.profile_image_url,
+      preferredLanguage: user.preferred_language,
       token,
     });
   } catch (err) {
@@ -630,6 +635,37 @@ exports.changePassword = async (req, res, next) => {
       message: 'Password changed successfully. You will receive a security notification email.' 
     });
   } catch (err) {
+    next(err);
+  }
+};
+
+// @route PUT /api/auth/me/language (protected)
+exports.updateLanguage = async (req, res, next) => {
+  const { preferredLanguage } = req.body;
+  
+  try {
+    // Validate language
+    const validLanguages = ['sw', 'en'];
+    if (!validLanguages.includes(preferredLanguage)) {
+      return res.status(400).json({ error: 'Invalid language. Must be sw or en' });
+    }
+    
+    // Update user's preferred language
+    const result = await pool.query(
+      'UPDATE users SET preferred_language = $1, updated_at = NOW() WHERE id = $2::uuid RETURNING id, preferred_language',
+      [preferredLanguage, req.user.id]
+    );
+    
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    res.json({
+      message: 'Language preference updated successfully',
+      preferredLanguage: result.rows[0].preferred_language,
+    });
+  } catch (err) {
+    console.error('Language update error:', err.message);
     next(err);
   }
 };

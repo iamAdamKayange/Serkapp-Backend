@@ -32,6 +32,11 @@ router.post('/users/:userId/unban', adminMiddleware, adminController.unbanUser);
 // Houses management
 router.get('/houses', adminMiddleware, adminController.getHouses);
 router.get('/houses/:houseId', adminMiddleware, adminController.getHouseDetails);
+router.post('/houses/:houseId/approve', adminMiddleware, adminController.approveHouse);
+router.post('/houses/:houseId/reject', adminMiddleware, adminController.rejectHouse);
+router.post('/houses/:houseId/hide', adminMiddleware, adminController.hideHouse);
+router.post('/houses/:houseId/unhide', adminMiddleware, adminController.unhideHouse);
+router.delete('/houses/:houseId', adminMiddleware, adminController.deleteHouse);
 
 // Verification queue
 router.get('/verifications/queue', adminMiddleware, adminController.getVerificationQueue);
