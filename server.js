@@ -43,8 +43,6 @@ async function runMigrations() {
     }
   }
 }
-const fs = require('fs');
-const path = require('path');
 
 // Validate required environment variables
 const requiredEnvVars = [
