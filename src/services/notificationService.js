@@ -151,25 +151,43 @@ const ensureNotificationTables = async () => {
     ON app_alert_preferences (enabled)
   `);
 
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_app_saved_houses_user_id
-    ON app_saved_houses (user_id)
-  `);
+  // Only create indexes for app_saved_houses if the table exists with the right columns
+  try {
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_app_saved_houses_user_id
+      ON app_saved_houses (user_id)
+    `);
+  } catch (indexErr) {
+    console.log('⚠️  Could not create idx_app_saved_houses_user_id (table may have different schema)');
+  }
 
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_app_saved_houses_house_id
-    ON app_saved_houses (house_id)
-  `);
+  try {
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_app_saved_houses_house_id
+      ON app_saved_houses (house_id)
+    `);
+  } catch (indexErr) {
+    console.log('⚠️  Could not create idx_app_saved_houses_house_id (table may have different schema)');
+  }
 
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_app_notification_dismissals_user_id
-    ON app_notification_dismissals (user_id)
-  `);
+  // Only create indexes for app_notification_dismissals if the table exists with the right columns
+  try {
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_app_notification_dismissals_user_id
+      ON app_notification_dismissals (user_id)
+    `);
+  } catch (indexErr) {
+    console.log('⚠️  Could not create idx_app_notification_dismissals_user_id (table may have different schema)');
+  }
 
-  await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_app_notification_dismissals_notification_id
-    ON app_notification_dismissals (notification_id)
-  `);
+  try {
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_app_notification_dismissals_notification_id
+      ON app_notification_dismissals (notification_id)
+    `);
+  } catch (indexErr) {
+    console.log('⚠️  Could not create idx_app_notification_dismissals_notification_id (table may have different schema)');
+  }
 
   // ==================== VIDEO LIKE & COMMENT TABLES ====================
   

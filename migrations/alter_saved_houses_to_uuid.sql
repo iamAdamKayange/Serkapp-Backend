@@ -1,29 +1,40 @@
 -- Migration: Alter app_saved_houses table to use UUID types safely
 -- This changes the column types from TEXT to UUID without dropping the table
 
--- Check if table exists and alter columns if needed
+-- First, check if table exists, if not create it with correct schema
 DO $$
 BEGIN
-  -- Check if table exists
-  IF EXISTS (
+  IF NOT EXISTS (
     SELECT 1 FROM information_schema.tables
     WHERE table_name = 'app_saved_houses'
   ) THEN
-    -- Alter user_id column to UUID if it's TEXT
-    IF EXISTS (
-      SELECT 1 FROM information_schema.columns
-      WHERE table_name = 'app_saved_houses' AND column_name = 'user_id' AND data_type = 'text'
-    ) THEN
-      ALTER TABLE app_saved_houses ALTER COLUMN user_id TYPE UUID USING user_id::uuid;
-    END IF;
-    
-    -- Alter house_id column to UUID if it's TEXT
-    IF EXISTS (
-      SELECT 1 FROM information_schema.columns
-      WHERE table_name = 'app_saved_houses' AND column_name = 'house_id' AND data_type = 'text'
-    ) THEN
-      ALTER TABLE app_saved_houses ALTER COLUMN house_id TYPE UUID USING house_id::uuid;
-    END IF;
+    CREATE TABLE app_saved_houses (
+      id BIGSERIAL PRIMARY KEY,
+      user_id UUID NOT NULL,
+      house_id UUID NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE (user_id, house_id)
+    );
+  END IF;
+END $$;
+
+-- Check if table exists and alter columns if needed
+DO $$
+BEGIN
+  -- Alter user_id column to UUID if it's TEXT
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'app_saved_houses' AND column_name = 'user_id' AND data_type = 'text'
+  ) THEN
+    ALTER TABLE app_saved_houses ALTER COLUMN user_id TYPE UUID USING user_id::uuid;
+  END IF;
+  
+  -- Alter house_id column to UUID if it's TEXT
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name = 'app_saved_houses' AND column_name = 'house_id' AND data_type = 'text'
+  ) THEN
+    ALTER TABLE app_saved_houses ALTER COLUMN house_id TYPE UUID USING house_id::uuid;
   END IF;
 END $$;
 
