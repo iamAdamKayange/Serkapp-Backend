@@ -152,13 +152,23 @@ const ensureNotificationTables = async () => {
   `);
 
   await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_app_saved_houses_token
-    ON app_saved_houses (fcm_token, created_at DESC)
+    CREATE INDEX IF NOT EXISTS idx_app_saved_houses_user_id
+    ON app_saved_houses (user_id)
   `);
 
   await pool.query(`
-    CREATE INDEX IF NOT EXISTS idx_app_notification_dismissals_token
-    ON app_notification_dismissals (fcm_token, dismissed_at DESC)
+    CREATE INDEX IF NOT EXISTS idx_app_saved_houses_house_id
+    ON app_saved_houses (house_id)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_app_notification_dismissals_user_id
+    ON app_notification_dismissals (user_id)
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_app_notification_dismissals_notification_id
+    ON app_notification_dismissals (notification_id)
   `);
 
   // ==================== VIDEO LIKE & COMMENT TABLES ====================
