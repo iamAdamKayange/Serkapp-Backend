@@ -6,6 +6,45 @@ const { initSocket } = require('./src/services/socketService');
 const { ensureNotificationTables } = require('./src/services/notificationService');
 const { validateEmailConfig } = require('./src/services/emailService');
 const { initializeSecurityTables } = require('./src/services/auditLogService');
+const fs = require('fs');
+const path = require('path');
+
+// Auto-run database migrations on startup
+async function runMigrations() {
+  try {
+    const migrationsDir = path.join(__dirname, 'migrations');
+    if (!fs.existsSync(migrationsDir)) {
+      console.log('⚠️  No migrations directory found, skipping migrations');
+      return;
+    }
+
+    const migrationFiles = fs.readdirSync(migrationsDir)
+      .filter(f => f.endsWith('.sql'))
+      .sort();
+
+    console.log(`📋 Found ${migrationFiles.length} migration file(s)`);
+
+    for (const file of migrationFiles) {
+      const filePath = path.join(migrationsDir, file);
+      const migration = fs.readFileSync(filePath, 'utf8');
+      
+      console.log(`⚙️  Applying migration: ${file}...`);
+      await pool.query(migration);
+      console.log(`✅ Migration applied: ${file}`);
+    }
+
+    console.log('✅ All migrations applied successfully!');
+  } catch (err) {
+    if (err.message && err.message.includes('already exists')) {
+      console.log('⚠️  Migration columns already exist, continuing...');
+    } else {
+      console.error('❌ Migration failed:', err.message);
+      // Don't exit on migration failure, just log it
+    }
+  }
+}
+const fs = require('fs');
+const path = require('path');
 
 // Validate required environment variables
 const requiredEnvVars = [
@@ -37,13 +76,16 @@ const server = http.createServer(app);
 
 initSocket(server);
 
-pool.connect((err, client, release) => {
+pool.connect(async (err, client, release) => {
   if (err) {
     console.error('❌ Database connection failed:', err.stack);
     process.exit(1);
   } else {
     console.log('✅ Connected to PostgreSQL');
     release();
+    
+    // Run migrations first
+    await runMigrations();
     
     // Initialize notification tables
     ensureNotificationTables()

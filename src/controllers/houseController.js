@@ -235,7 +235,7 @@ exports.getAllHouses = async (req, res, next) => {
       LEFT JOIN house_video_thumbnails hvt ON hvt.house_id = h.id
       LEFT JOIN video_like_counts vl ON vl.video_key = hv.id::text
       LEFT JOIN video_comment_counts vc ON vc.video_key = hv.id::text
-      WHERE h.status = 'Inapatikana'
+      WHERE h.status = 'Inapatikana' AND h.deleted_at IS NULL
       GROUP BY h.id, u.first_name, u.last_name
       ORDER BY h.created_at DESC
       LIMIT $1 OFFSET $2
@@ -303,7 +303,7 @@ exports.getVideoFeed = async (req, res, next) => {
       LEFT JOIN house_video_thumbnails hvt ON hvt.house_id = h.id
       LEFT JOIN video_like_counts vl ON vl.video_key = hv.id::text
       LEFT JOIN video_comment_counts vc ON vc.video_key = hv.id::text
-      WHERE h.status = 'Inapatikana'
+      WHERE h.status = 'Inapatikana' AND h.deleted_at IS NULL
       GROUP BY h.id, u.first_name, u.last_name
       ORDER BY h.created_at DESC
       LIMIT $1 OFFSET $2
@@ -405,7 +405,7 @@ exports.getMyHouses = async (req, res, next) => {
       LEFT JOIN house_images hi ON hi.house_id = h.id
       LEFT JOIN house_videos hv ON hv.house_id = h.id
       LEFT JOIN house_video_thumbnails hvt ON hvt.house_id = h.id
-      WHERE h.landlord_id = $1
+      WHERE h.landlord_id = $1 AND h.deleted_at IS NULL
       GROUP BY h.id, u.first_name, u.last_name
       ORDER BY h.created_at DESC
     `;
@@ -593,14 +593,24 @@ exports.deleteHouse = async (req, res, next) => {
   try {
     await client.query('BEGIN');
     
+    // Add deleted_at column if it doesn't exist (fallback for migration)
+    try {
+      await client.query(`
+        ALTER TABLE houses
+        ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ
+      `);
+    } catch (alterErr) {
+      // Column might already exist, ignore error
+    }
+    
     const ownerCheck = await client.query(`SELECT id FROM houses WHERE id = $1 AND landlord_id = $2`, [id, landlordId]);
     if (ownerCheck.rows.length === 0) {
       await client.query('ROLLBACK');
       return res.status(403).json({ error: 'Huna ruhusa' });
     }
 
-    // Hard delete: remove record (will be soft delete after migration is applied)
-    await client.query(`DELETE FROM houses WHERE id = $1`, [id]);
+    // Soft delete: mark as deleted instead of removing record
+    await client.query(`UPDATE houses SET deleted_at = NOW(), updated_at = NOW() WHERE id = $1`, [id]);
     await client.query('COMMIT');
     
     emitToAll('house:deleted', { houseId: id, landlordId });

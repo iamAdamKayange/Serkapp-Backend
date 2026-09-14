@@ -5,7 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "migrate": "node scripts/apply-migration.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1077.0",

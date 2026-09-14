@@ -67,14 +67,31 @@ exports.register = async (req, res, next) => {
     const validLanguages = ['sw', 'en'];
     const userLanguage = validLanguages.includes(preferredLanguage) ? preferredLanguage : 'sw';
     
-    // Insert user (without preferred_language until migration is applied)
-    const result = await pool.query(
-      `INSERT INTO users (email, password_hash, first_name, last_name, phone, role)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, email, first_name, last_name, phone, role, profile_image_url`,
-      [email, passwordHash, firstName, lastName, phone, userRole]
-    );
-    const user = result.rows[0];
+    // Insert user - try with preferred_language first (for when migration is applied)
+    let user;
+    try {
+      const result = await pool.query(
+        `INSERT INTO users (email, password_hash, first_name, last_name, phone, role, preferred_language)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, email, first_name, last_name, phone, role, profile_image_url, preferred_language`,
+        [email, passwordHash, firstName, lastName, phone, userRole, userLanguage]
+      );
+      user = result.rows[0];
+    } catch (insertErr) {
+      // If column doesn't exist, insert without it
+      if (insertErr.message && insertErr.message.includes('column "preferred_language" does not exist')) {
+        const result = await pool.query(
+          `INSERT INTO users (email, password_hash, first_name, last_name, phone, role)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           RETURNING id, email, first_name, last_name, phone, role, profile_image_url`,
+          [email, passwordHash, firstName, lastName, phone, userRole]
+        );
+        user = result.rows[0];
+        user.preferred_language = userLanguage; // Add for consistency
+      } else {
+        throw insertErr;
+      }
+    }
     const token = generateToken(user);
     
     // If registering as landlord, create initial verification records
@@ -101,6 +118,7 @@ exports.register = async (req, res, next) => {
       phone: user.phone,
       role: user.role,
       profileImageUrl: user.profile_image_url,
+      preferredLanguage: user.preferred_language || userLanguage,
       token,
     });
   } catch (err) {
@@ -649,7 +667,7 @@ exports.updateLanguage = async (req, res, next) => {
       return res.status(400).json({ error: 'Invalid language. Must be sw or en' });
     }
     
-    // Update user's preferred language (if column exists)
+    // Update user's preferred language
     try {
       const result = await pool.query(
         'UPDATE users SET preferred_language = $1, updated_at = NOW() WHERE id = $2::uuid RETURNING id, preferred_language',
