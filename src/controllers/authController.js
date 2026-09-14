@@ -67,12 +67,12 @@ exports.register = async (req, res, next) => {
     const validLanguages = ['sw', 'en'];
     const userLanguage = validLanguages.includes(preferredLanguage) ? preferredLanguage : 'sw';
     
-    // Insert user
+    // Insert user (without preferred_language until migration is applied)
     const result = await pool.query(
-      `INSERT INTO users (email, password_hash, first_name, last_name, phone, role, preferred_language)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING id, email, first_name, last_name, phone, role, profile_image_url, preferred_language`,
-      [email, passwordHash, firstName, lastName, phone, userRole, userLanguage]
+      `INSERT INTO users (email, password_hash, first_name, last_name, phone, role)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, email, first_name, last_name, phone, role, profile_image_url`,
+      [email, passwordHash, firstName, lastName, phone, userRole]
     );
     const user = result.rows[0];
     const token = generateToken(user);
@@ -101,7 +101,6 @@ exports.register = async (req, res, next) => {
       phone: user.phone,
       role: user.role,
       profileImageUrl: user.profile_image_url,
-      preferredLanguage: user.preferred_language,
       token,
     });
   } catch (err) {
@@ -650,20 +649,32 @@ exports.updateLanguage = async (req, res, next) => {
       return res.status(400).json({ error: 'Invalid language. Must be sw or en' });
     }
     
-    // Update user's preferred language
-    const result = await pool.query(
-      'UPDATE users SET preferred_language = $1, updated_at = NOW() WHERE id = $2::uuid RETURNING id, preferred_language',
-      [preferredLanguage, req.user.id]
-    );
-    
-    if (result.rows.length === 0) {
-      return res.status(404).json({ error: 'User not found' });
+    // Update user's preferred language (if column exists)
+    try {
+      const result = await pool.query(
+        'UPDATE users SET preferred_language = $1, updated_at = NOW() WHERE id = $2::uuid RETURNING id, preferred_language',
+        [preferredLanguage, req.user.id]
+      );
+      
+      if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'User not found' });
+      }
+      
+      res.json({
+        message: 'Language preference updated successfully',
+        preferredLanguage: result.rows[0].preferred_language,
+      });
+    } catch (updateErr) {
+      // If column doesn't exist, just return success with the requested language
+      if (updateErr.message && updateErr.message.includes('column "preferred_language" does not exist')) {
+        res.json({
+          message: 'Language preference noted (migration pending)',
+          preferredLanguage: preferredLanguage,
+        });
+      } else {
+        throw updateErr;
+      }
     }
-    
-    res.json({
-      message: 'Language preference updated successfully',
-      preferredLanguage: result.rows[0].preferred_language,
-    });
   } catch (err) {
     console.error('Language update error:', err.message);
     next(err);
